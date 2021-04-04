@@ -9,6 +9,7 @@ from tensorflow.keras.layers import MaxPooling2D, AveragePooling2D, BatchNormali
 from tensorflow.keras.layers import Subtract, GlobalMaxPooling2D, Conv2D, Dense, Lambda
 from tensorflow.keras import Input
 from scipy.signal import gaussian
+
 from progressbar import ProgressBar
 from streaking_cal.misc import interp
 import numpy as np
@@ -163,46 +164,15 @@ TOF_instrument_function = TOF_instrument_function[TOF_instrument_function > 0]
 
 TOF_instrument_function = np.fromfile(
     './resources/TOF_response2.dat', dtype=np.float32)
-# %%
 
-# %%
-x1 = Pulse.from_GS(dT=np.random.uniform(10/2.355, 120/2.355), 
-            centralE=71.5,
-            dE=np.random.uniform(0.2/2.355, 1.8/2.355), 
-            num_electrons1=np.random.randint(15, 31), 
-            num_electrons2=np.random.randint(15, 31)
-                       )
 
-# %%
-enss=[]
-for i in np.arange(1024)+1:
-    enss.append(b1.VLS_pixel_to_energies(i))
-# %%
-sss=x1.get_augmented_spectra(0,discretized=False)
-plt.plot(enss,2.3*b1.VLS_signal)
-plt.plot(tof_ens,sss[0])
-plt.plot(tof_ens,10*sss[1])
 
-plt.plot(tof_ens,10*sss[2])
-
-plt.xlim([67,85])
-# %%
-
-# %%
-(xuv, str1, str2) = x1.get_augmented_spectra(95, discretized=False)
-b1 = Raw_data(np.asarray((xuv, str1, str2)), tof_ens, x1.get_temp(), 
-            num_electrons1=x1.num_electrons1, num_electrons2=x1.num_electrons2)
-rm=b1.get_raw_matrix()
-plt.plot(rm[0])
-plt.plot(rm[1])
-plt.plot(rm[2])
-plt.xlim([400,800])
 
 # %%
 # timeit
 pbar = ProgressBar()
 
-num_pulses = 130000
+num_pulses = 13000
 streakspeed = 95  # meV/fs
 X = [""]*num_pulses
 y = [""]*num_pulses
@@ -240,54 +210,122 @@ def convLayer(filters):
     return Conv2D(filters=filters, kernel_size=(1, 7), activation="relu", strides=1, padding="same")
 
 # %%
+class Antirectifier(tf.keras.layers.Layer):
+    def __init__(self, initializer="he_normal", **kwargs):
+        super(Antirectifier, self).__init__(**kwargs)
+        self.initializer = tf.keras.initializers.get(initializer)
 
-convdim = 128
+    def build(self, input_shape):
+        output_dim = input_shape[-1]
+        self.kernel = self.add_weight(
+            shape=(output_dim * 2, output_dim),
+            initializer=self.initializer,
+            name="kernel",
+            trainable=True,
+        )
+
+    def call(self, inputs):
+        inputs -= tf.reduce_mean(inputs, axis=-1, keepdims=True)
+        pos = tf.nn.relu(inputs)
+        neg = tf.nn.relu(-inputs)
+        concatenated = tf.concat([pos, neg], axis=-1)
+        mixed = tf.matmul(concatenated, self.kernel)
+        return mixed
+
+    def get_config(self):
+        # Implement get_config to enable serialization. This is optional.
+        base_config = super(Antirectifier, self).get_config()
+        config = {"initializer": tf.keras.initializers.serialize(self.initializer)}
+        return dict(list(base_config.items()) + list(config.items()))
+
+
+# %%
+def fourier(inputs):
+    x=inputs[0]
+    y = inputs[1]
+    j_tf=tf.complex(tf.constant([0.]), tf.constant([1.]))
+    y = tf.complex(y, tf.constant([0.]))
+    y = tf.math.multiply(y, j_tf)
+    y = tf.math.exp(y)
+
+    x = tf.complex(x, tf.constant([0.]))
+    x = tf.math.sqrt(x)
+    z = tf.math.multiply(x, y)
+    z = tf.keras.layers.Lambda(tf.signal.fft)(z)
+    z = tf.abs(z)
+    z = tf.math.square(z)
+    z = tf.dtypes.cast(z,tf.float64)
+    return z
+
+# %%
+convdim = 256
 
 inputs = Input(shape=(3, 1825, 1), name="traces")
 
 
 
-conv_out = Conv2D(convdim, kernel_size=(3, 500), activation="relu", strides=1, padding="same"
+conv_out = Conv2D(convdim, kernel_size=(3, 500), activation="linear", strides=(3,1), padding="same"
                   )(inputs)
 
+
+x = Antirectifier()(conv_out) 
 
 # # x = MaxPooling2D(pool_size=(3, 3),strides=(1,2), padding="valid")(conv_out)
 # # x2 = AveragePooling2D(pool_size=(3, 3),strides=(1,2), padding="valid")(conv_out)
 
 # # x = Subtract()([x, x2])
 
-x = GlobalMaxPooling2D()(conv_out)
+x = GlobalMaxPooling2D()(x)
+
+x = BatchNormalization()(x)
+
+# x = Dense(256, activation="relu"
+#           #          , kernel_constraint=CenterAround(0)
+#           )(x)
+
+# x = Dense(standard_full_time.shape[0], activation="linear")(x)
+# x = Antirectifier()(x) 
+
+
+x = tf.keras.layers.Reshape([-1,convdim])(x)
+
+intens = Lambda( lambda x: tf.slice(x, (0, 0, 0), (1, -1, 128)), name = "slice0")(x)
+phase = Lambda( lambda x: tf.slice(x, (0, 0, 128), (1, -1, 128)), name = "slice1")(x)
+
+# intens = tf.keras.layers.Cropping1D(cropping=(0,256))(x)
+# phase = tf.keras.layers.Cropping1D(cropping=(256,512))(x)
+
+# x = tf.keras.layers.Lambda(tf.signal.fft)(x)
 
 # x = tf.keras.layers.LeakyReLU()(x)
 
 # x = Flatten()(x)
 
-x = BatchNormalization()(x)
-
-x = Dense(256, activation="relu"
-          #          , kernel_constraint=CenterAround(0)
-          )(x)
 
 # x= Dense(10,activation="relu"
 # #          , kernel_constraint=CenterAround(0)
 #         )(x)
 
-# x= Dense(100,activation="relu"
-# #          , kernel_constraint=CenterAround(0)
-#         )(x)
+x= Dense(100,activation="relu"
+#          , kernel_constraint=CenterAround(0)
+        )(intens)
+x = Lambda(fourier, name = "fourier")([intens,phase])
+# x = fourier(intens, phase)
 
+# outputs  = tf.linalg.normalize(x, ord='1')
 
 outputs = Dense(standard_full_time.shape[0], activation="softmax")(x)
 
 model = tf.keras.Model(inputs, outputs, name="mynet")
 model.summary()
+
 # %%
 
 wholeset = np.arange(len(X))
 
 pulses_train, pulses_test, y_train, y_test = train_test_split(
     wholeset, wholeset, test_size=0.05, random_state=1)
-params = {'batch_size': 300}
+params = {'batch_size': 5}
 train_ds = Datagenerator(pulses_train, y_train, X=X, **params)
 test_ds = Datagenerator(pulses_test, y_test, X=X, for_train=False, **params)
 
@@ -310,7 +348,8 @@ history = model.fit(x=train_ds, validation_data=test_ds,
                     epochs=80
                     )
 # %%
-from tensorflow.keras.layers import MaxPooling2D, AveragePooling2D, BatchNormalization, Flatten
+# model.save('./models/RAW_mat_15-30els')
+model = tf.keras.models.load_model('./models/RAW_mat_15-30els')
 
 # %%
 from numba import cuda 
@@ -331,8 +370,9 @@ device.reset()
 testitems= test_ds.__getitem__(1)
 preds=model.predict(testitems[0])
 y_test=testitems[1]
-%matplotlib inline
-vv=17
+print(testitems[0].shape)
+# %matplotlib inline
+vv=21
 
 
 plt.plot(standard_full_time,y_test[vv])
@@ -347,5 +387,59 @@ plt.figure()
 plt.plot(np.arange(1825),testitems[0][vv][1])
 plt.plot(np.arange(1825),testitems[0][vv][2])
 # plt.plot(np.arange(1825),testitems[0][vv][0])
-plt.xlim([400,650])
+plt.xlim([400,800])
+# %%
+import os
+import re
+from itertools import repeat
+
+files=os.listdir("./resources/raw_mathematica/up/")
+numbers=list(map(re.findall,repeat("[0-9]{4}"),files))
+numbers=np.asarray(numbers)[:,0].astype("int32")
+
+# %%
+
+
+tof1=[]
+tof2=[]
+vls=[]
+for i in numbers:
+    tof11=np.fromfile("./resources/raw_mathematica/up/TOF1-"+str(i)+".dat","float32")
+    tof21=np.fromfile("./resources/raw_mathematica/up/TOF2-"+str(i)+".dat","float32")
+    vls11=np.fromfile("./resources/raw_mathematica/up/VLS-"+str(i)+".dat","float32")
+    tof11=np.roll(tof11,150)
+    tof21=np.roll(tof21,150)
+    vls11=np.pad(vls11,pad_width=(0, len(tof11)-len(vls11)))
+    tof1.append(tof11)
+    tof2.append(tof21)
+    vls.append(vls11)
+
+
+
+# %%
+ # %%
+plt.plot(tof21)
+# %%
+testitems=np.reshape(np.asarray([vls,tof1,tof2]),[len(numbers),3,-1,1])
+
+preds=model.predict(testitems)
+# %matplotlib inline
+vv=89
+
+
+# plt.plot(time,gaussian_filter(y_test[vv],10))
+
+plt.figure()
+plt.plot(standard_full_time,preds[vv],'orange')
+weighted_avg_and_std(standard_full_time,preds[vv])
+
+
+# %%
+weighted_avg_and_std(standard_full_time,preds[vv])
+# %%
+preds.shape
+# %%
+9.8*3,25
+# %%
+9.8*2.35
 # %%
