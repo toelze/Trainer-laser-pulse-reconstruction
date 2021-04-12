@@ -314,9 +314,13 @@ history = model.fit(x=train_ds, validation_data=test_ds,
 from tensorflow.keras.layers import MaxPooling2D, AveragePooling2D, BatchNormalization, Flatten
 
 # %%
-from numba import cuda 
-device = cuda.get_current_device()
-device.reset()
+# model.save('./models/RAW_mat_15-30els_70-76eV')
+
+model = tf.keras.models.load_model('./models/RAW_mat_15-30els_70-76eV')
+
+# from numba import cuda 
+# device = cuda.get_current_device()
+# device.reset()
 # %%
 #"nadam"
 #701 points, 5 epochs, 130000 pulses,val_loss=0.3551
@@ -333,7 +337,7 @@ testitems= test_ds.__getitem__(1)
 preds=model.predict(testitems[0])
 y_test=testitems[1]
 %matplotlib inline
-vv=17
+vv=12
 
 
 plt.plot(standard_full_time,y_test[vv])
@@ -383,7 +387,7 @@ testitems=np.reshape(np.asarray([vls,tof1,tof2]),[len(numbers),3,-1,1])
 
 preds=model.predict(testitems)
 # %matplotlib inline
-vv=89
+vv=88
 
 
 # plt.plot(time,gaussian_filter(y_test[vv],10))
@@ -391,3 +395,9 @@ vv=89
 plt.figure()
 plt.plot(standard_full_time,preds[vv],'orange')
 weighted_avg_and_std(standard_full_time,preds[vv])
+# %%
+plt.plot(np.arange(1825),testitems[vv][1])
+plt.plot(np.arange(1825),testitems[vv][2])
+plt.plot(np.arange(1825),testitems[vv][0])
+plt.xlim([550,700])
+# %%
