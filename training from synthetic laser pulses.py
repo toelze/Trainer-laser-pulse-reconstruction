@@ -211,7 +211,8 @@ for i in pbar(range(num_pulses)):
     x1 = Pulse.from_GS(dT=np.random.uniform(10/2.355, 120/2.355), 
             dE=np.random.uniform(0.2/2.355, 1.8/2.355), 
             num_electrons1=np.random.randint(15, 35), 
-            num_electrons2=np.random.randint(15, 35)
+            num_electrons2=np.random.randint(15, 35),
+            centralE=np.random.uniform(70,76)
                        )
     x1.get_spectra(streakspeed, discretized=False)
     X[i] = x1
@@ -287,7 +288,7 @@ wholeset = np.arange(len(X))
 
 pulses_train, pulses_test, y_train, y_test = train_test_split(
     wholeset, wholeset, test_size=0.05, random_state=1)
-params = {'batch_size': 300}
+params = {'batch_size': 20}
 train_ds = Datagenerator(pulses_train, y_train, X=X, **params)
 test_ds = Datagenerator(pulses_test, y_test, X=X, for_train=False, **params)
 
@@ -346,6 +347,6 @@ plt.figure()
 # plt.plot(tof_ens,testitems[0][vv][0])
 plt.plot(np.arange(1825),testitems[0][vv][1])
 plt.plot(np.arange(1825),testitems[0][vv][2])
-# plt.plot(np.arange(1825),testitems[0][vv][0])
-plt.xlim([400,650])
+plt.plot(np.arange(1825),testitems[0][vv][0])
+plt.xlim([550,700])
 # %%
