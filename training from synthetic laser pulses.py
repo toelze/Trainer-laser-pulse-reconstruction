@@ -350,3 +350,44 @@ plt.plot(np.arange(1825),testitems[0][vv][2])
 plt.plot(np.arange(1825),testitems[0][vv][0])
 plt.xlim([550,700])
 # %%
+import os
+import re
+from itertools import repeat
+
+files=os.listdir("./resources/raw_mathematica/up/")
+numbers=list(map(re.findall,repeat("[0-9]{4}"),files))
+numbers=np.asarray(numbers)[:,0].astype("int32")
+
+# %%
+
+
+
+tof1=[]
+tof2=[]
+vls=[]
+for i in numbers:
+    tof11=np.fromfile("./resources/raw_mathematica/up/TOF1-"+str(i)+".dat","float32")
+    tof21=np.fromfile("./resources/raw_mathematica/up/TOF2-"+str(i)+".dat","float32")
+    vls11=np.fromfile("./resources/raw_mathematica/up/VLS-"+str(i)+".dat","float32")
+    tof11=np.roll(tof11,150)
+    tof21=np.roll(tof21,150)
+    vls11=np.pad(vls11,pad_width=(0, len(tof11)-len(vls11)))
+    tof1.append(tof11)
+    tof2.append(tof21)
+    vls.append(vls11)
+
+testitems=np.reshape(np.asarray([vls,tof1,tof2]),[len(numbers),3,-1,1])
+
+
+# %%
+
+preds=model.predict(testitems)
+# %matplotlib inline
+vv=89
+
+
+# plt.plot(time,gaussian_filter(y_test[vv],10))
+
+plt.figure()
+plt.plot(standard_full_time,preds[vv],'orange')
+weighted_avg_and_std(standard_full_time,preds[vv])
