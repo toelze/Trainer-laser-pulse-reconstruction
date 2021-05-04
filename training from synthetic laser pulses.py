@@ -1,4 +1,8 @@
 # %%
+# TODO: Warum ist VLS nicht über TOF Daten in Simulationen? Warum ist das gemessene Rauschen nicht 
+# wie in den Simulation? Sind die Messdaten korrekt? Bringt es evtl. etwas einen anderen Run anzugucken?
+
+
 import datetime
 
 from streaking_cal.statistics import weighted_avg_and_std  
@@ -163,7 +167,6 @@ TOF_instrument_function = TOF_instrument_function[TOF_instrument_function > 0]
 
 TOF_instrument_function = np.fromfile(
     './resources/TOF_response2.dat', dtype=np.float32)
-# %%
 
 # %%
 x1 = Pulse.from_GS(dT=np.random.uniform(10/2.355, 120/2.355), 
@@ -174,9 +177,9 @@ x1 = Pulse.from_GS(dT=np.random.uniform(10/2.355, 120/2.355),
                        )
 
 # %%
-enss=[]
-for i in np.arange(1024)+1:
-    enss.append(b1.VLS_pixel_to_energies(i))
+# enss=[]
+# for i in np.arange(1024)+1:
+#     enss.append(b1.VLS_pixel_to_energies(i))
 # %%
 sss=x1.get_augmented_spectra(0,discretized=False)
 plt.plot(enss,2.3*b1.VLS_signal)
@@ -210,8 +213,8 @@ y = [""]*num_pulses
 for i in pbar(range(num_pulses)):
     x1 = Pulse.from_GS(dT=np.random.uniform(10/2.355, 120/2.355), 
             dE=np.random.uniform(0.2/2.355, 1.8/2.355), 
-            num_electrons1=np.random.randint(15, 35), 
-            num_electrons2=np.random.randint(15, 35),
+            num_electrons1=np.random.randint(15, 85), 
+            num_electrons2=np.random.randint(15, 85),
             centralE=np.random.uniform(70,76)
                        )
     x1.get_spectra(streakspeed, discretized=False)
@@ -288,7 +291,7 @@ wholeset = np.arange(len(X))
 
 pulses_train, pulses_test, y_train, y_test = train_test_split(
     wholeset, wholeset, test_size=0.05, random_state=1)
-params = {'batch_size': 20}
+params = {'batch_size': 200}
 train_ds = Datagenerator(pulses_train, y_train, X=X, **params)
 test_ds = Datagenerator(pulses_test, y_test, X=X, for_train=False, **params)
 
@@ -316,7 +319,7 @@ from tensorflow.keras.layers import MaxPooling2D, AveragePooling2D, BatchNormali
 # %%
 # model.save('./models/RAW_mat_15-30els_70-76eV')
 
-model = tf.keras.models.load_model('./models/RAW_mat_15-30els_70-76eV')
+# model = tf.keras.models.load_model('./models/RAW_mat_15-30els_70-76eV')
 
 # from numba import cuda 
 # device = cuda.get_current_device()
@@ -336,7 +339,7 @@ model = tf.keras.models.load_model('./models/RAW_mat_15-30els_70-76eV')
 testitems= test_ds.__getitem__(1)
 preds=model.predict(testitems[0])
 y_test=testitems[1]
-%matplotlib inline
+# %matplotlib inline
 vv=12
 
 
@@ -349,10 +352,10 @@ plt.plot(standard_full_time,preds[vv],'orange')
 
 plt.figure()
 # plt.plot(tof_ens,testitems[0][vv][0])
-plt.plot(np.arange(1825),testitems[0][vv][1])
 plt.plot(np.arange(1825),testitems[0][vv][2])
+plt.plot(np.arange(1825),testitems[0][vv][1])
 plt.plot(np.arange(1825),testitems[0][vv][0])
-plt.xlim([550,700])
+plt.xlim([200,700])
 # %%
 import os
 import re
@@ -387,7 +390,7 @@ testitems=np.reshape(np.asarray([vls,tof1,tof2]),[len(numbers),3,-1,1])
 
 preds=model.predict(testitems)
 # %matplotlib inline
-vv=88
+vv=10
 
 
 # plt.plot(time,gaussian_filter(y_test[vv],10))
@@ -399,5 +402,7 @@ weighted_avg_and_std(standard_full_time,preds[vv])
 plt.plot(np.arange(1825),testitems[vv][1])
 plt.plot(np.arange(1825),testitems[vv][2])
 plt.plot(np.arange(1825),testitems[vv][0])
-plt.xlim([550,700])
+plt.xlim([1,1500])
+# %%
+
 # %%
