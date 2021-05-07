@@ -44,7 +44,7 @@ def GetSASE(CentralEnergy, dE_FWHM, dt_FWHM, samples=0, onlyT=False):
         return newEaxis, EnOutput, newTaxis, TOutput
     
 def GetSASE_gpu(CentralEnergy, dE_FWHM, dt_FWHM, samples=0, onlyT=False):
-    from streaking_cal.misc import interp
+    from cupy import interp
     import cupy as cp
     h=4.135667662 #in eV*fs
     dE=dE_FWHM/2.355 #in eV, converts to sigma

@@ -6,7 +6,8 @@
 import datetime
 
 from streaking_cal.statistics import weighted_avg_and_std  
-from streaking_cal.misc import interp
+# from streaking_cal.misc import interp
+from cupy import interp
 from tensorflow.keras.optimizers import Adam
 from sklearn.model_selection import train_test_split
 from tensorflow.keras.layers import MaxPooling2D, AveragePooling2D, BatchNormalization, Flatten
@@ -14,7 +15,7 @@ from tensorflow.keras.layers import Subtract, GlobalMaxPooling2D, Conv2D, Dense,
 from tensorflow.keras import Input
 from scipy.signal import gaussian
 from progressbar import ProgressBar
-from streaking_cal.misc import interp
+# from streaking_cal.misc import interp
 import numpy as np
 from numpy.random import randint, rand
 
@@ -40,7 +41,7 @@ import tensorflow as tf
 
 # tf.config.experimental.set_lms_enabled(True)
 
-from tensorflow_addons.layers import WeightNormalization
+# from tensorflow_addons.layers import WeightNormalization
 from tensorflow.keras.regularizers import l1_l2
 # gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=0.9)
 
@@ -140,7 +141,14 @@ measurednoise_val = np.loadtxt("./resources/measurednoise_val.txt")
 print("Num GPUs Available: ", len(
     tf.config.experimental.list_physical_devices('GPU')))
 print(tf.version.VERSION)
+# %%
+import tensorflow as tf
+# import cupy as cp
 
+print("Num GPUs Available: ", len(
+    tf.config.experimental.list_physical_devices('GPU')))
+print(tf.version.VERSION)
+# cupy.fusion
 
 # %%
 dt2 = np.dtype([('xuv', np.float64), ('up', np.float64), ('down', np.float64)])
@@ -205,7 +213,7 @@ plt.xlim([400,800])
 # timeit
 pbar = ProgressBar()
 
-num_pulses = 130000
+num_pulses = 100000
 streakspeed = 95  # meV/fs
 X = [""]*num_pulses
 y = [""]*num_pulses
@@ -340,7 +348,7 @@ testitems= test_ds.__getitem__(1)
 preds=model.predict(testitems[0])
 y_test=testitems[1]
 # %matplotlib inline
-vv=12
+vv=11
 
 
 plt.plot(standard_full_time,y_test[vv])

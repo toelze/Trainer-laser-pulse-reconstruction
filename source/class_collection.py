@@ -2,7 +2,8 @@
 import numpy as np
 from numba import njit, vectorize, float64, boolean
 from tensorflow.keras.utils import Sequence
-from streaking_cal.misc import interp
+# from streaking_cal.misc import interp
+from cupy import interp
 import cupy as cp
 
 import pandas as pd
@@ -314,7 +315,6 @@ class Pulse(object):
         del(TOutput)
 
 #     @property for read access only members
-
     @classmethod
     def from_GS(cls, dE=0.35, dT=35, centralE=73, num_electrons1=25, num_electrons2=25):
         from streaking_cal.GetSASE import GetSASE_gpu as GS
