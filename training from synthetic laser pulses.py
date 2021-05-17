@@ -4,30 +4,34 @@
 
 
 import datetime
+import os
 
-from streaking_cal.statistics import weighted_avg_and_std  
-# from streaking_cal.misc import interp
-from cupy import interp
-from tensorflow.keras.optimizers import Adam
-from sklearn.model_selection import train_test_split
-from tensorflow.keras.layers import MaxPooling2D, AveragePooling2D, BatchNormalization, Flatten
-from tensorflow.keras.layers import Subtract, GlobalMaxPooling2D, Conv2D, Dense, Lambda
-from tensorflow.keras import Input
-from scipy.signal import gaussian
-from progressbar import ProgressBar
+import cupy as cp
+import matplotlib.pyplot as plt
 # from streaking_cal.misc import interp
 import numpy as np
-from numpy.random import randint, rand
-
 import pandas as pd
-import os
 import scipy as sp
-from scipy.interpolate import interp1d
-import matplotlib.pyplot as plt
-from numba import vectorize, float64, boolean, njit
-
-
 import tensorflow as tf
+# from streaking_cal.misc import interp
+from cupy import interp
+from numba import boolean, float64, njit, vectorize
+from numpy.random import rand, randint
+from progressbar import ProgressBar
+from scipy.interpolate import interp1d
+from scipy.signal import gaussian
+from sklearn.model_selection import train_test_split
+from tensorflow.keras import Input
+from tensorflow.keras.layers import (AveragePooling2D, BatchNormalization,
+                                     Conv2D, Dense, Flatten,
+                                     GlobalMaxPooling2D, Lambda, MaxPooling2D,
+                                     Subtract)
+from tensorflow.keras.optimizers import Adam
+# from tensorflow_addons.layers import WeightNormalization
+from tensorflow.keras.regularizers import l1_l2
+
+from streaking_cal.statistics import weighted_avg_and_std
+
 # try:
 #     # Disable all GPUS
 #     tf.config.set_visible_devices([], 'GPU')
@@ -41,14 +45,11 @@ import tensorflow as tf
 
 # tf.config.experimental.set_lms_enabled(True)
 
-# from tensorflow_addons.layers import WeightNormalization
-from tensorflow.keras.regularizers import l1_l2
 # gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=0.9)
 
 # sess = tf.Session(config=tf.ConfigProto(gpu_options=gpu_options))
 
 
-import cupy as cp
 mempool = cp.get_default_memory_pool()
 # with cp.cuda.Device(0):
 #     mempool.set_limit(size=800*1024**2)
@@ -57,9 +58,7 @@ mempool = cp.get_default_memory_pool()
 
 # from scipy.signal import find_peaks,peak_widths
 # from scipy.ndimage import gaussian_filter
-from source.class_collection import Pulse, Raw_data, Datagenerator
-
-
+from source.class_collection import Datagenerator, Pulse, Raw_data
 
 # def ws_reg(kernel):
 #     if kernel.shape[0] > 0:
@@ -141,14 +140,6 @@ measurednoise_val = np.loadtxt("./resources/measurednoise_val.txt")
 print("Num GPUs Available: ", len(
     tf.config.experimental.list_physical_devices('GPU')))
 print(tf.version.VERSION)
-# %%
-import tensorflow as tf
-# import cupy as cp
-
-print("Num GPUs Available: ", len(
-    tf.config.experimental.list_physical_devices('GPU')))
-print(tf.version.VERSION)
-# cupy.fusion
 
 # %%
 dt2 = np.dtype([('xuv', np.float64), ('up', np.float64), ('down', np.float64)])
@@ -211,14 +202,15 @@ plt.xlim([400,800])
 
 # %%
 # timeit
-pbar = ProgressBar()
+# pbar = ProgressBar()
+from tqdm import tqdm as pbar
 
-num_pulses = 100000
+num_pulses = 120000
 streakspeed = 95  # meV/fs
 X = [""]*num_pulses
 y = [""]*num_pulses
 
-for i in pbar(range(num_pulses)):
+for i in pbar(range(num_pulses),colour = 'red', ncols= 100):
     x1 = Pulse.from_GS(dT=np.random.uniform(10/2.355, 120/2.355), 
             dE=np.random.uniform(0.2/2.355, 1.8/2.355), 
             num_electrons1=np.random.randint(15, 85), 
@@ -227,10 +219,17 @@ for i in pbar(range(num_pulses)):
                        )
     x1.get_spectra(streakspeed, discretized=False)
     X[i] = x1
-
-
-
 # %%
+X[0]
+(xuv, str1, str2) = X[0].get_augmented_spectra(0, discretized=False)
+b1 = Raw_data(np.asarray((xuv, str1, str2)), tof_ens, X[0].get_temp(
+            ), num_electrons1=X[0].num_electrons1, num_electrons2=X[0].num_electrons2)
+plt.plot(b1.get_raw_matrix()[2])
+# %%
+help(np.random.normal)
+# %%
+ plt.hist(np.random.uniform(0.00007,0.00014,1).item()*np.random.randn(1825))
+ # %%
 class CenterAround(tf.keras.constraints.Constraint):
     #   """Constrains weight tensors to be centered around `ref_value`."""
 
@@ -258,8 +257,8 @@ convdim = 128
 inputs = Input(shape=(3, 1825, 1), name="traces")
 
 
-
-conv_out = Conv2D(convdim, kernel_size=(3, 500), activation="relu", strides=1, padding="same"
+# HIER kernel_size=(3, 500) für bessere Ergebnisse bzw. kernel_size=(1, 500) für zeilenunabh. Mustererkennung
+conv_out = Conv2D(convdim, kernel_size=(1, 500), activation="relu", strides=1, padding="same"
                   )(inputs)
 
 
@@ -322,9 +321,13 @@ history = model.fit(x=train_ds, validation_data=test_ds,
                     epochs=80
                     )
 # %%
-from tensorflow.keras.layers import MaxPooling2D, AveragePooling2D, BatchNormalization, Flatten
+from tensorflow.keras.layers import (AveragePooling2D, BatchNormalization,
+                                     Flatten, MaxPooling2D)
 
 # %%
+%%timeit 
+preds=model.predict(testitems[0])
+
 # model.save('./models/RAW_mat_15-30els_70-76eV')
 
 # model = tf.keras.models.load_model('./models/RAW_mat_15-30els_70-76eV')
@@ -348,7 +351,7 @@ testitems= test_ds.__getitem__(1)
 preds=model.predict(testitems[0])
 y_test=testitems[1]
 # %matplotlib inline
-vv=11
+vv=7
 
 
 plt.plot(standard_full_time,y_test[vv])
@@ -398,7 +401,7 @@ testitems=np.reshape(np.asarray([vls,tof1,tof2]),[len(numbers),3,-1,1])
 
 preds=model.predict(testitems)
 # %matplotlib inline
-vv=10
+vv=47
 
 
 # plt.plot(time,gaussian_filter(y_test[vv],10))
@@ -407,7 +410,7 @@ plt.figure()
 plt.plot(standard_full_time,preds[vv],'orange')
 weighted_avg_and_std(standard_full_time,preds[vv])
 # %%
-plt.plot(np.arange(1825),testitems[vv][1])
+# plt.plot(np.arange(1825),testitems[vv][1])
 plt.plot(np.arange(1825),testitems[vv][2])
 plt.plot(np.arange(1825),testitems[vv][0])
 plt.xlim([1,1500])
