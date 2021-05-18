@@ -1,6 +1,7 @@
 # %%
 # TODO: Warum ist VLS nicht über TOF Daten in Simulationen? Warum ist das gemessene Rauschen nicht 
 # wie in den Simulation? Sind die Messdaten korrekt? Bringt es evtl. etwas einen anderen Run anzugucken?
+# das VLS Rauschen ist Faktor 10 erhöht??? - nochmal angucken
 
 
 import datetime
@@ -205,7 +206,7 @@ plt.xlim([400,800])
 # pbar = ProgressBar()
 from tqdm import tqdm as pbar
 
-num_pulses = 120000
+num_pulses = 1000
 streakspeed = 95  # meV/fs
 X = [""]*num_pulses
 y = [""]*num_pulses
@@ -220,16 +221,15 @@ for i in pbar(range(num_pulses),colour = 'red', ncols= 100):
     x1.get_spectra(streakspeed, discretized=False)
     X[i] = x1
 # %%
-X[0]
-(xuv, str1, str2) = X[0].get_augmented_spectra(0, discretized=False)
-b1 = Raw_data(np.asarray((xuv, str1, str2)), tof_ens, X[0].get_temp(
-            ), num_electrons1=X[0].num_electrons1, num_electrons2=X[0].num_electrons2)
-plt.plot(b1.get_raw_matrix()[2])
-# %%
-help(np.random.normal)
-# %%
- plt.hist(np.random.uniform(0.00007,0.00014,1).item()*np.random.randn(1825))
- # %%
+x=X[17]
+(xuv, str1, str2) = x.get_augmented_spectra(0, discretized=False)
+b2 = Raw_data(np.asarray((xuv, str1, str2)), tof_ens, x.get_temp(
+            ), num_electrons1=x.num_electrons1, num_electrons2=x.num_electrons2)
+plt.plot(b2.get_raw_matrix().T)
+
+#%%
+(str11,str21)=b2.calc_tof_traces()
+plt.plot(str21) # %%
 class CenterAround(tf.keras.constraints.Constraint):
     #   """Constrains weight tensors to be centered around `ref_value`."""
 
@@ -351,7 +351,7 @@ testitems= test_ds.__getitem__(1)
 preds=model.predict(testitems[0])
 y_test=testitems[1]
 # %matplotlib inline
-vv=7
+vv=1
 
 
 plt.plot(standard_full_time,y_test[vv])
@@ -401,7 +401,7 @@ testitems=np.reshape(np.asarray([vls,tof1,tof2]),[len(numbers),3,-1,1])
 
 preds=model.predict(testitems)
 # %matplotlib inline
-vv=47
+vv=99
 
 
 # plt.plot(time,gaussian_filter(y_test[vv],10))
@@ -410,10 +410,17 @@ plt.figure()
 plt.plot(standard_full_time,preds[vv],'orange')
 weighted_avg_and_std(standard_full_time,preds[vv])
 # %%
-# plt.plot(np.arange(1825),testitems[vv][1])
+plt.plot(np.arange(1825),testitems[vv][1])
 plt.plot(np.arange(1825),testitems[vv][2])
 plt.plot(np.arange(1825),testitems[vv][0])
 plt.xlim([1,1500])
 # %%
+plt.plot(np.arange(1825),testitems[0][vv][2])
+plt.plot(np.arange(1825),testitems[0][vv][1])
+plt.plot(np.arange(1825),testitems[0][vv][0])
+plt.xlim([1,1500])
+
+# %%
+
 
 # %%

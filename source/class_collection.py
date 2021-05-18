@@ -90,8 +90,8 @@ class Raw_data():
 
         self.calc_vls_spectrum()
 
-        self.num_TOF_noise0=np.int(12+np.random.randn()*2)
-        self.num_TOF_noise1=np.int(12+np.random.randn()*2)
+        self.num_TOF_noise0=np.int(3+np.random.rand()*12) # num of stray electrons in spectra
+        self.num_TOF_noise1=np.int(3+np.random.rand()*12)
 
 
     def calc_tof_traces(self):
@@ -132,6 +132,12 @@ class Raw_data():
 
         self.VLS_pixels = Raw_data.VLS_pixels
 
+    def vls_finite_resolution(self,spectrum):
+        from scipy import signal
+        spectrum = np.convolve(spectrum,signal.gaussian(21, std=2),'same')
+        return spectrum
+
+
     def get_raw_matrix(self):
         from numpy import roll, pad
         from numpy import sum as npsum
@@ -140,6 +146,11 @@ class Raw_data():
 
         vls_new = pad(self.VLS_signal,
                       pad_width=(0, len(TOF_traces[0])-len(self.VLS_signal)))
+        vls_new = self.vls_finite_resolution(vls_new)
+        vls_new = self.add_tof_noise_hf(vls_new,0.0009,0.0013) # real measured noise = 0.00011
+        vls_new = vls_new/np.sum(vls_new)
+
+
         tof_new0 = roll(TOF_traces[0], 150) # roll, so that TOF and VLS are closer together
         tof_new1 = roll(TOF_traces[1], 150)
 
@@ -148,12 +159,18 @@ class Raw_data():
 
 
         tof_new0 = np.convolve(tof_new0, Raw_data.TOF_response, mode="same")
+        tof_new0 = tof_new0/np.sum(tof_new0)
         tof_new0 =  self.add_tof_noise_hf(tof_new0)
         tof_new0 = tof_new0/np.sum(tof_new0)
 
+
+
         tof_new1 = np.convolve(tof_new1, Raw_data.TOF_response, mode="same")
+        tof_new1 = tof_new1/np.sum(tof_new1)
         tof_new1 =  self.add_tof_noise_hf(tof_new1)
         tof_new1 = tof_new1/np.sum(tof_new1)
+
+
 
         return np.asarray([vls_new, tof_new0, tof_new1])
 
@@ -163,13 +180,18 @@ class Raw_data():
 
         return withspikes
 
-    def add_tof_noise_hf(self,spectrum):
-        with_noise=spectrum+ np.abs(spectrum+np.random.randn(len(spectrum)))/5000 # 5000 aus gemessenen Daten
+    def add_tof_noise_hf(self,spectrum, lower=0.00007, upper = 0.00014):
+        """Add white noise to spectra, similar to real measurements"""
+        # 0.00007 to 0.00014 from actual measured TOF spectra
+        with_noise = np.abs(spectrum + np.random.uniform(lower,upper,1).item()*np.random.randn(len(spectrum)))
+
         return with_noise
 
 
 
     def get_all_tof(self):
+        """if every signal was measured over time-of-flight
+        currently not used"""
         tof_matrix = self.get_raw_matrix()
         VLS = self.VLS_signal_to_energies()
         VLS = self.TOF_signal_correction(VLS)
@@ -252,7 +274,7 @@ class Raw_data():
         '''simple linear interpolation and summation'''
         disc_spec = np.zeros(arr_length)
         for i in positions:
-            valll = np.random.rand()+1
+            valll = 8*np.random.rand()+0.5 # which heights are suitable? propably between 0.5 and 4.5
             (divval, modval) = np.divmod(i, 1)
             divval = np.int(divval)
             disc_spec[divval] += valll*(1-modval)
