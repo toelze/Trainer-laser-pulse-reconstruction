@@ -90,8 +90,8 @@ class Raw_data():
 
         self.calc_vls_spectrum()
 
-        self.num_TOF_noise0=np.int(3+np.random.rand()*12) # num of stray electrons in spectra
-        self.num_TOF_noise1=np.int(3+np.random.rand()*12)
+        self.num_TOF_noise0=np.int(3+np.random.rand()*20) # num of stray electrons in spectra
+        self.num_TOF_noise1=np.int(3+np.random.rand()*20)
 
 
     def calc_tof_traces(self):
@@ -147,8 +147,9 @@ class Raw_data():
         vls_new = pad(self.VLS_signal,
                       pad_width=(0, len(TOF_traces[0])-len(self.VLS_signal)))
         vls_new = self.vls_finite_resolution(vls_new)
-        vls_new = self.add_tof_noise_hf(vls_new,0.0009,0.0013) # real measured noise = 0.00011
+        vls_new = self.add_tof_noise_hf(vls_new,0.00009,0.00013) # real measured noise = 0.00011
         vls_new = vls_new/np.sum(vls_new)
+        vls_new = roll(vls_new, 200)
 
 
         tof_new0 = roll(TOF_traces[0], 150) # roll, so that TOF and VLS are closer together

@@ -206,7 +206,7 @@ plt.xlim([400,800])
 # pbar = ProgressBar()
 from tqdm import tqdm as pbar
 
-num_pulses = 1000
+num_pulses = 120000
 streakspeed = 95  # meV/fs
 X = [""]*num_pulses
 y = [""]*num_pulses
@@ -229,7 +229,8 @@ plt.plot(b2.get_raw_matrix().T)
 
 #%%
 (str11,str21)=b2.calc_tof_traces()
-plt.plot(str21) # %%
+plt.plot(str21)
+ # %%
 class CenterAround(tf.keras.constraints.Constraint):
     #   """Constrains weight tensors to be centered around `ref_value`."""
 
@@ -258,7 +259,7 @@ inputs = Input(shape=(3, 1825, 1), name="traces")
 
 
 # HIER kernel_size=(3, 500) für bessere Ergebnisse bzw. kernel_size=(1, 500) für zeilenunabh. Mustererkennung
-conv_out = Conv2D(convdim, kernel_size=(1, 500), activation="relu", strides=1, padding="same"
+conv_out = Conv2D(convdim, kernel_size=(3, 500), activation="relu", strides=1, padding="same"
                   )(inputs)
 
 
@@ -325,8 +326,8 @@ from tensorflow.keras.layers import (AveragePooling2D, BatchNormalization,
                                      Flatten, MaxPooling2D)
 
 # %%
-%%timeit 
-preds=model.predict(testitems[0])
+# %%timeit 
+# preds=model.predict(testitems[0])
 
 # model.save('./models/RAW_mat_15-30els_70-76eV')
 
@@ -347,11 +348,11 @@ preds=model.predict(testitems[0])
 #adam 1e-3
 #model-normal:1401 points 25 epochs, 130000 pulses val_loss= 0.3550 (0.3550-0.3568)
 # %%
-testitems= test_ds.__getitem__(1)
+testitems= test_ds.__getitem__(0)
 preds=model.predict(testitems[0])
 y_test=testitems[1]
 # %matplotlib inline
-vv=1
+vv=28
 
 
 plt.plot(standard_full_time,y_test[vv])
@@ -373,9 +374,9 @@ import re
 from itertools import repeat
 
 files=os.listdir("./resources/raw_mathematica/up/")
+
 numbers=list(map(re.findall,repeat("[0-9]{4}"),files))
 numbers=np.asarray(numbers)[:,0].astype("int32")
-
 # %%
 
 
@@ -394,30 +395,33 @@ for i in numbers:
     tof2.append(tof21)
     vls.append(vls11)
 
-testitems=np.reshape(np.asarray([vls,tof1,tof2]),[len(numbers),3,-1,1])
+testitems2=np.reshape(np.asarray([vls,tof1,tof2]),[len(numbers),3,-1,1])
 
 
 # %%
 
-preds=model.predict(testitems)
+# preds=model.predict(testitems)
 # %matplotlib inline
-vv=99
+vv=49
 
 
 # plt.plot(time,gaussian_filter(y_test[vv],10))
 
 plt.figure()
-plt.plot(standard_full_time,preds[vv],'orange')
-weighted_avg_and_std(standard_full_time,preds[vv])
-# %%
-plt.plot(np.arange(1825),testitems[vv][1])
-plt.plot(np.arange(1825),testitems[vv][2])
-plt.plot(np.arange(1825),testitems[vv][0])
-plt.xlim([1,1500])
+plt.plot(standard_full_time,
+        preds[vv],
+        'orange')
+print(weighted_avg_and_std(standard_full_time,preds[vv]))
+plt.figure()
+plt.plot(np.arange(1825),testitems2[vv][1])
+plt.plot(np.arange(1825),testitems2[vv][2])
+# plt.plot(np.arange(1825),testitems2[vv][0])
+plt.xlim([500,700])
 # %%
 plt.plot(np.arange(1825),testitems[0][vv][2])
 plt.plot(np.arange(1825),testitems[0][vv][1])
 plt.plot(np.arange(1825),testitems[0][vv][0])
+
 plt.xlim([1,1500])
 
 # %%
