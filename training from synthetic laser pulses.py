@@ -1,8 +1,7 @@
 # %%
 # TODO: Warum ist VLS nicht über TOF Daten in Simulationen? Warum ist das gemessene Rauschen nicht 
 # wie in den Simulation? Sind die Messdaten korrekt? Bringt es evtl. etwas einen anderen Run anzugucken?
-# das VLS Rauschen ist Faktor 10 erhöht??? - nochmal angucken
-
+# Probieren schwerpunkte auf gleiche Werte verschieben -> beseitigt das das Problem??
 
 import datetime
 import os
@@ -206,7 +205,7 @@ plt.xlim([400,800])
 # pbar = ProgressBar()
 from tqdm import tqdm as pbar
 
-num_pulses = 120000
+num_pulses = 100000
 streakspeed = 95  # meV/fs
 X = [""]*num_pulses
 y = [""]*num_pulses
@@ -214,22 +213,33 @@ y = [""]*num_pulses
 for i in pbar(range(num_pulses),colour = 'red', ncols= 100):
     x1 = Pulse.from_GS(dT=np.random.uniform(10/2.355, 120/2.355), 
             dE=np.random.uniform(0.2/2.355, 1.8/2.355), 
-            num_electrons1=np.random.randint(15, 85), 
-            num_electrons2=np.random.randint(15, 85),
+            num_electrons1=np.random.randint(15, 31), 
+            num_electrons2=np.random.randint(15, 31),
             centralE=np.random.uniform(70,76)
                        )
     x1.get_spectra(streakspeed, discretized=False)
     X[i] = x1
 # %%
+%matplotlib inline
+# import scipy
+# # plt.figure()
+# # plt.plot(Raw_data.TOF_response)
+# plt.figure()
+# tstd=8
+# gaussw=scipy.signal.gaussian(len(Raw_data.TOF_response), std=tstd)
+# gaussw=np.roll(gaussw,np.random.randint(-25+tstd,25-tstd))
+# gaussw+=np.abs(0.4*np.random.randn(len(Raw_data.TOF_response)))
+# gaussw= gaussw/np.sum(gaussw)
+# plt.plot(gaussw)
 x=X[17]
 (xuv, str1, str2) = x.get_augmented_spectra(0, discretized=False)
 b2 = Raw_data(np.asarray((xuv, str1, str2)), tof_ens, x.get_temp(
             ), num_electrons1=x.num_electrons1, num_electrons2=x.num_electrons2)
 plt.plot(b2.get_raw_matrix().T)
-
+# %%
 #%%
-(str11,str21)=b2.calc_tof_traces()
-plt.plot(str21)
+# (str11,str21)=b2.calc_tof_traces()
+# plt.plot(str21)
  # %%
 class CenterAround(tf.keras.constraints.Constraint):
     #   """Constrains weight tensors to be centered around `ref_value`."""
@@ -352,7 +362,7 @@ testitems= test_ds.__getitem__(0)
 preds=model.predict(testitems[0])
 y_test=testitems[1]
 # %matplotlib inline
-vv=28
+vv=78
 
 
 plt.plot(standard_full_time,y_test[vv])
@@ -367,7 +377,7 @@ plt.figure()
 plt.plot(np.arange(1825),testitems[0][vv][2])
 plt.plot(np.arange(1825),testitems[0][vv][1])
 plt.plot(np.arange(1825),testitems[0][vv][0])
-plt.xlim([200,700])
+plt.xlim([200,900])
 # %%
 import os
 import re
@@ -391,6 +401,7 @@ for i in numbers:
     tof11=np.roll(tof11,150)
     tof21=np.roll(tof21,150)
     vls11=np.pad(vls11,pad_width=(0, len(tof11)-len(vls11)))
+    vls11=np.roll(vls11,0)
     tof1.append(tof11)
     tof2.append(tof21)
     vls.append(vls11)
@@ -400,9 +411,9 @@ testitems2=np.reshape(np.asarray([vls,tof1,tof2]),[len(numbers),3,-1,1])
 
 # %%
 
-# preds=model.predict(testitems)
+preds=model.predict(testitems2)
 # %matplotlib inline
-vv=49
+vv=108
 
 
 # plt.plot(time,gaussian_filter(y_test[vv],10))
@@ -415,7 +426,7 @@ print(weighted_avg_and_std(standard_full_time,preds[vv]))
 plt.figure()
 plt.plot(np.arange(1825),testitems2[vv][1])
 plt.plot(np.arange(1825),testitems2[vv][2])
-# plt.plot(np.arange(1825),testitems2[vv][0])
+plt.plot(np.arange(1825),testitems2[vv][0])
 plt.xlim([500,700])
 # %%
 plt.plot(np.arange(1825),testitems[0][vv][2])

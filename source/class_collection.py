@@ -8,6 +8,8 @@ import cupy as cp
 
 import pandas as pd
 
+import scipy
+
 h = 4.135667662  # in eV*fs
 
 dt = np.dtype([('up', np.float32), ('down', np.float32)])
@@ -73,8 +75,8 @@ class Raw_data():
     
     # parameters from TOF calibration
     TOF_params = asarray([-755.693, 187.222, -39.8])
-    TOF_response = np.fromfile("./resources/TOF_response.dat", dtype="float64")
-    TOF_response = TOF_response/np.sum(TOF_response)
+    # TOF_response = np.fromfile("./resources/TOF_response.dat", dtype="float64")
+    # TOF_response = TOF_response/np.sum(TOF_response)
 
     TOF_times = linspace(0, 506+2/3, 1825)  # TOF times raw data
 
@@ -87,12 +89,22 @@ class Raw_data():
         self.TOF_times = self.energies_to_TOF_times(energies)
         self.temp_profile = temp_profile
         self.spectra = spectra
+        self.TOF_response = self.get_random_response_curve()
 
         self.calc_vls_spectrum()
 
-        self.num_TOF_noise0=np.int(3+np.random.rand()*20) # num of stray electrons in spectra
-        self.num_TOF_noise1=np.int(3+np.random.rand()*20)
+        self.num_TOF_noise0=np.int(0+np.random.rand()*3) # num of stray electrons in spectra
+        self.num_TOF_noise1=np.int(0+np.random.rand()*3)
 
+    def get_random_response_curve(self):
+        resp_length=51;
+        tstd=2+9*np.random.rand();
+        noiselevel= 0.4*np.random.rand();
+        response=scipy.signal.gaussian(resp_length, std=tstd)
+        response=np.roll(response,np.random.randint(-(resp_length // 2)+tstd,(resp_length // 2)-tstd))
+        response+=np.abs(noiselevel*np.random.randn(resp_length))
+        response= response/np.sum(response)
+        return response
 
     def calc_tof_traces(self):
         from numpy import argsort, take_along_axis, asarray
@@ -149,7 +161,7 @@ class Raw_data():
         vls_new = self.vls_finite_resolution(vls_new)
         vls_new = self.add_tof_noise_hf(vls_new,0.00009,0.00013) # real measured noise = 0.00011
         vls_new = vls_new/np.sum(vls_new)
-        vls_new = roll(vls_new, 200)
+        vls_new = roll(vls_new, 0)
 
 
         tof_new0 = roll(TOF_traces[0], 150) # roll, so that TOF and VLS are closer together
@@ -159,14 +171,14 @@ class Raw_data():
         tof_new1 =  self.add_tof_noise(tof_new1,self.num_TOF_noise1)
 
 
-        tof_new0 = np.convolve(tof_new0, Raw_data.TOF_response, mode="same")
+        tof_new0 = np.convolve(tof_new0, self.TOF_response, mode="same")
         tof_new0 = tof_new0/np.sum(tof_new0)
         tof_new0 =  self.add_tof_noise_hf(tof_new0)
         tof_new0 = tof_new0/np.sum(tof_new0)
 
 
 
-        tof_new1 = np.convolve(tof_new1, Raw_data.TOF_response, mode="same")
+        tof_new1 = np.convolve(tof_new1, self.TOF_response, mode="same")
         tof_new1 = tof_new1/np.sum(tof_new1)
         tof_new1 =  self.add_tof_noise_hf(tof_new1)
         tof_new1 = tof_new1/np.sum(tof_new1)
@@ -205,7 +217,7 @@ class Raw_data():
     def energies_to_TOF_times(self, energies_eV):  # in ns
         from numpy import sqrt
         TOF_times = self.TOF_params[0]**2/sqrt((self.TOF_params[0]**2)*(
-            energies_eV + self.TOF_params[2]))  # funtioniert
+            energies_eV + self.TOF_params[2]))  # funktioniert
         return TOF_times  # -min(TOF_times)
 
     def VLS_pixel_to_energies(self, vls_pixel):
@@ -587,7 +599,7 @@ class Pulse(object):
             streakspeed_in_meV_per_fs, discretized=discretized))
 
 #         to reduce dependancy from XUV-photon energy
-        shiftall = randint(-60, 60)
+        shiftall = randint(-20, 20)
 #         to account for jitter
         shiftstr = randint(0, 40)
 
