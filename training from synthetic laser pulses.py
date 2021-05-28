@@ -395,9 +395,6 @@ tof1=[]
 tof2=[]
 vls=[]
 testitems2=[]
-x=[]
-y=[]
-z=[]
 for i in numbers:
     tof11=np.fromfile("./resources/raw_mathematica/up/TOF1-"+str(i)+".dat","float32")
     tof21=np.fromfile("./resources/raw_mathematica/up/TOF2-"+str(i)+".dat","float32")
@@ -406,13 +403,7 @@ for i in numbers:
     tof21=np.roll(tof21,150)
     vls11=np.pad(vls11,pad_width=(0, len(tof11)-len(vls11)))
     vls11=np.roll(vls11,0)
-    # tof1.append(tof11)
-    # tof2.append(tof21)
-    # vls.append(vls11)
     testitems2.append([vls11,tof11,tof21])
-    x=vls11
-    y=tof11
-    z=tof21
 testitems2=np.reshape(np.asarray(testitems2),[len(numbers),3,-1,1])
 
 #%%
