@@ -205,7 +205,7 @@ plt.xlim([400,800])
 # pbar = ProgressBar()
 from tqdm import tqdm as pbar
 
-num_pulses = 100000
+num_pulses = 10000
 streakspeed = 95  # meV/fs
 X = [""]*num_pulses
 y = [""]*num_pulses
@@ -362,7 +362,7 @@ testitems= test_ds.__getitem__(0)
 preds=model.predict(testitems[0])
 y_test=testitems[1]
 # %matplotlib inline
-vv=78
+vv=10
 
 
 plt.plot(standard_full_time,y_test[vv])
@@ -394,6 +394,10 @@ numbers=np.asarray(numbers)[:,0].astype("int32")
 tof1=[]
 tof2=[]
 vls=[]
+testitems2=[]
+x=[]
+y=[]
+z=[]
 for i in numbers:
     tof11=np.fromfile("./resources/raw_mathematica/up/TOF1-"+str(i)+".dat","float32")
     tof21=np.fromfile("./resources/raw_mathematica/up/TOF2-"+str(i)+".dat","float32")
@@ -402,18 +406,19 @@ for i in numbers:
     tof21=np.roll(tof21,150)
     vls11=np.pad(vls11,pad_width=(0, len(tof11)-len(vls11)))
     vls11=np.roll(vls11,0)
-    tof1.append(tof11)
-    tof2.append(tof21)
-    vls.append(vls11)
+    # tof1.append(tof11)
+    # tof2.append(tof21)
+    # vls.append(vls11)
+    testitems2.append([vls11,tof11,tof21])
+    x=vls11
+    y=tof11
+    z=tof21
+testitems2=np.reshape(np.asarray(testitems2),[len(numbers),3,-1,1])
 
-testitems2=np.reshape(np.asarray([vls,tof1,tof2]),[len(numbers),3,-1,1])
-
-
-# %%
-
+#%%
 preds=model.predict(testitems2)
 # %matplotlib inline
-vv=108
+vv=1
 
 
 # plt.plot(time,gaussian_filter(y_test[vv],10))
@@ -436,6 +441,19 @@ plt.plot(np.arange(1825),testitems[0][vv][0])
 plt.xlim([1,1500])
 
 # %%
+spec_stat= np.asarray([[weighted_avg_and_std(np.arange(len(testitems2[0,0])),np.abs(testitems2[i,j].reshape(-1,))) 
+            for j in np.arange(0,3)] 
+            for i in np.arange(len(testitems2))])
+# %%
+plt.figure()
+plt.hist(spec_stat[:,0,0],50)
+plt.hist(spec_stat[:,1,0],50)
+plt.hist(spec_stat[:,2,0],50)
 
-
+# %%
+spec_stat[:,1,0]-spec_stat[:,2,0]
+# %%
+plt.hist(testitems2[:,:,1].reshape(-1,),100)
+# %%
+numbers
 # %%

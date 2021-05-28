@@ -1,3 +1,6 @@
+from numpy.lib.function_base import median
+
+
 def weighted_avg_and_std(values, weights):
     from math import sqrt
     from numpy import average

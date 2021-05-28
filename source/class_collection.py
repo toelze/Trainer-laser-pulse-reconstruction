@@ -97,7 +97,7 @@ class Raw_data():
         self.num_TOF_noise1=np.int(0+np.random.rand()*3)
 
     def get_random_response_curve(self):
-        resp_length=51;
+        resp_length=30;
         tstd=2+9*np.random.rand();
         noiselevel= 0.4*np.random.rand();
         response=scipy.signal.gaussian(resp_length, std=tstd)
