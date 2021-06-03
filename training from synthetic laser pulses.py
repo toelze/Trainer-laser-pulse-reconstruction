@@ -1,7 +1,8 @@
 # %%
-# TODO: Warum ist VLS nicht über TOF Daten in Simulationen? Warum ist das gemessene Rauschen nicht 
-# wie in den Simulation? Sind die Messdaten korrekt? Bringt es evtl. etwas einen anderen Run anzugucken?
-# Probieren schwerpunkte auf gleiche Werte verschieben -> beseitigt das das Problem??
+# TODO: sind die Parameter wirklich genau die selben?
+# TODO: Histogramm der Messdaten: VLS bei ca 580, TOF1 und TOF2 ca bei 680 <- genau analysieren
+
+
 
 import datetime
 import os
@@ -171,41 +172,99 @@ TOF_instrument_function = np.fromfile(
 x1 = Pulse.from_GS(dT=np.random.uniform(10/2.355, 120/2.355), 
             centralE=71.5,
             dE=np.random.uniform(0.2/2.355, 1.8/2.355), 
-            num_electrons1=np.random.randint(15, 31), 
-            num_electrons2=np.random.randint(15, 31)
+            num_electrons1=np.random.randint(15, 40), 
+            num_electrons2=np.random.randint(15, 40)
                        )
-
-# %%
-# enss=[]
-# for i in np.arange(1024)+1:
-#     enss.append(b1.VLS_pixel_to_energies(i))
-# %%
-sss=x1.get_augmented_spectra(0,discretized=False)
-plt.plot(enss,2.3*b1.VLS_signal)
-plt.plot(tof_ens,sss[0])
-plt.plot(tof_ens,10*sss[1])
-
-plt.plot(tof_ens,10*sss[2])
-
-plt.xlim([67,85])
-# %%
-
-# %%
+#%%
+plt.plot(tof_ens, x1.get_augmented_spectra(95)[1])
 (xuv, str1, str2) = x1.get_augmented_spectra(95, discretized=False)
 b1 = Raw_data(np.asarray((xuv, str1, str2)), tof_ens, x1.get_temp(), 
             num_electrons1=x1.num_electrons1, num_electrons2=x1.num_electrons2)
+# %%
+#  define TOF-times for measured data and calculate corresponding electron energies 
+mmtimes=(np.cumsum(np.full(2500,1.))-1)/3.6e9
+mmenergies=np.square(-755.6928301474567)/np.square(mmtimes[675:]*1e9 - 187.22222222222222) +39.8
+mmtimes*1e9
+Raw_data.TOF_times*1e9
+# mmenergies
+# b1.sorted_TOF_times
+# enss=[]
+# for i in np.arange(1024)+1:
+b1.energy_axis
+#%%
+# (-755.6928301474567**2/np.sqrt(np.square(b1.TOF_params[0])*(mmenergies - 39.8)))
+# b1.get_raw_matrix()
+synth_TOF_times= b1.TOF_times
+sorting= np.argsort(synth_TOF_times, axis=0)
+sorted_TOF_times = np.take_along_axis(synth_TOF_times, sorting, axis=0)
+newsig2=b1.TOF_signal_correction(b1.spectra[2])
+sortednewig2=np.take_along_axis(newsig2, sorting, axis=0)
+# ressig3= np.roll(np.interp(1e9*Raw_data.TOF_times,sorted_TOF_times,sortednewig2),150)
+ressig3= np.roll(np.interp(b1.energies_to_TOF_times(mmenergies),sorted_TOF_times,sortednewig2),150)
+
+# plt.plot(np.roll(ressig3,-20))
+plt.plot(b1.get_raw_matrix()[1:].T)
+plt.xlim([500,700])
+
+#%%
+# b1.energies_to_TOF_times(mmenergies)
+# 1e9*Raw_data.TOF_times
+# b1.energies_to_TOF_times(mmenergies)
+# (b1.TOF_params[1]+np.square(b1.TOF_params[0])/np.sqrt(np.square(b1.TOF_params[0])*(b1.energy_axis + b1.TOF_params[2])))# == -mmtimes[675:]*1e9
+# b1.TOF_times_sort_order
+
+plt.plot(b1.spectra[1:].T)
+plt.xlim([500,800])
+plt.figure()
+plt.plot(b1.get_raw_matrix()[1:].T)
+plt.xlim([500,700])
+plt.figure()
+plt.plot(b1.calc_tof_traces().T) # should be ~ spectra[1:] reversed, seems right
+plt.xlim([425,550])
+
+
+# plt.xlim([500,700])
+
+# b1.TOF_times
+# (b1.TOF_params[1]+np.square(b1.TOF_params[0])/np.sqrt(np.square(b1.TOF_params[0])*(mmenergies + b1.TOF_params[2])))
+# mmtimes*1e9
+# calc times from energies
+# (187.22222222222222+np.square(-755.6928301474567)/np.sqrt(np.square(-755.6928301474567)*(mmenergies + b1.TOF_params[2])))
+# b1.TOF_params[2]
+# 64.3556, 339.722
+# b1.TOF_times
+# mmenergies
+# 2.77778e-1/1e9
+# mmtimes
+
+# b1.TOF_params
+#     enss.append(b1.VLS_pixel_to_energies(i))
+# %%
+
+# %%
+
+# %%
+TOF_response = np.fromfile("./resources/TOF_response.dat", dtype="float64")
+TOF_response = TOF_response/np.sum(TOF_response)
+(xuv, str1, str2) = X[0].get_augmented_spectra(95, discretized=False)
+b1 = Raw_data(np.asarray((xuv, str1, str2)), tof_ens, x1.get_temp(), 
+            num_electrons1=x1.num_electrons1, num_electrons2=x1.num_electrons2)
 rm=b1.get_raw_matrix()
-plt.plot(rm[0])
-plt.plot(rm[1])
-plt.plot(rm[2])
-plt.xlim([400,800])
+# plt.plot(rm[0])
+# plt.plot(rm[1])
+# plt.plot(rm[2])
+# plt.xlim([400,800])
+# plt.plot(b1.TOF_response)
+plt.plot(np.abs(TOF_response-0.015+0.03*np.random.rand(58)))
+tempp=TOF_response-0.015+0.03*np.random.rand(58)
+plt.plot(np.clip(tempp,0,10))
 
 # %%
 # timeit
 # pbar = ProgressBar()
 from tqdm import tqdm as pbar
 
-num_pulses = 10000
+num_pulses = 100000
 streakspeed = 95  # meV/fs
 X = [""]*num_pulses
 y = [""]*num_pulses
@@ -213,9 +272,9 @@ y = [""]*num_pulses
 for i in pbar(range(num_pulses),colour = 'red', ncols= 100):
     x1 = Pulse.from_GS(dT=np.random.uniform(10/2.355, 120/2.355), 
             dE=np.random.uniform(0.2/2.355, 1.8/2.355), 
-            num_electrons1=np.random.randint(15, 31), 
-            num_electrons2=np.random.randint(15, 31),
-            centralE=np.random.uniform(70,76)
+            num_electrons1=np.random.randint(15, 40), 
+            num_electrons2=np.random.randint(15, 40),
+            centralE=np.random.uniform(65,76)
                        )
     x1.get_spectra(streakspeed, discretized=False)
     X[i] = x1
@@ -329,7 +388,7 @@ model.compile(optimizer="nadam", loss="KLDivergence",
 history = model.fit(x=train_ds, validation_data=test_ds,
                     #                     use_multiprocessing=True,
                     #                     workers=4,
-                    epochs=80
+                    epochs=40
                     )
 # %%
 from tensorflow.keras.layers import (AveragePooling2D, BatchNormalization,
@@ -362,7 +421,7 @@ testitems= test_ds.__getitem__(0)
 preds=model.predict(testitems[0])
 y_test=testitems[1]
 # %matplotlib inline
-vv=10
+vv=11
 
 
 plt.plot(standard_full_time,y_test[vv])
@@ -374,21 +433,27 @@ plt.plot(standard_full_time,preds[vv],'orange')
 
 plt.figure()
 # plt.plot(tof_ens,testitems[0][vv][0])
-plt.plot(np.arange(1825),testitems[0][vv][2])
-plt.plot(np.arange(1825),testitems[0][vv][1])
 plt.plot(np.arange(1825),testitems[0][vv][0])
-plt.xlim([200,900])
+plt.plot(np.arange(1825),testitems[0][vv][1])
+plt.plot(np.arange(1825),testitems[0][vv][2])
+plt.xlim([500,700])
 # %%
 import os
 import re
 from itertools import repeat
 
-files=os.listdir("./resources/raw_mathematica/up/")
+folder="./resources/raw_mathematica/down1/"
+files=os.listdir(folder)
+
+numbers=list(map(re.findall,repeat("[0-9]{5}"),files))
+numbers=np.asarray(numbers)[:,0].astype("int32")
+# %%
+folder="./resources/raw_mathematica/up/"
+files=os.listdir(folder)
 
 numbers=list(map(re.findall,repeat("[0-9]{4}"),files))
 numbers=np.asarray(numbers)[:,0].astype("int32")
-# %%
-
+#%%
 
 
 tof1=[]
@@ -396,9 +461,9 @@ tof2=[]
 vls=[]
 testitems2=[]
 for i in numbers:
-    tof11=np.fromfile("./resources/raw_mathematica/up/TOF1-"+str(i)+".dat","float32")
-    tof21=np.fromfile("./resources/raw_mathematica/up/TOF2-"+str(i)+".dat","float32")
-    vls11=np.fromfile("./resources/raw_mathematica/up/VLS-"+str(i)+".dat","float32")
+    tof11=np.fromfile(folder+"TOF1-"+str(i)+".dat","float32")
+    tof21=np.fromfile(folder+"TOF2-"+str(i)+".dat","float32")
+    vls11=np.fromfile(folder+"VLS-"+str(i)+".dat","float32")
     tof11=np.roll(tof11,150)
     tof21=np.roll(tof21,150)
     vls11=np.pad(vls11,pad_width=(0, len(tof11)-len(vls11)))
@@ -409,8 +474,7 @@ testitems2=np.reshape(np.asarray(testitems2),[len(numbers),3,-1,1])
 #%%
 preds=model.predict(testitems2)
 # %matplotlib inline
-vv=1
-
+vv=87
 
 # plt.plot(time,gaussian_filter(y_test[vv],10))
 
@@ -418,7 +482,8 @@ plt.figure()
 plt.plot(standard_full_time,
         preds[vv],
         'orange')
-print(weighted_avg_and_std(standard_full_time,preds[vv]))
+vsigma=weighted_avg_and_std(standard_full_time,preds[vv])
+print([vsigma,2.35*vsigma[1]])
 plt.figure()
 plt.plot(np.arange(1825),testitems2[vv][1])
 plt.plot(np.arange(1825),testitems2[vv][2])
@@ -431,17 +496,27 @@ plt.plot(np.arange(1825),testitems[0][vv][0])
 
 plt.xlim([1,1500])
 
-# %%
-spec_stat= np.asarray([[weighted_avg_and_std(np.arange(len(testitems2[0,0])),np.abs(testitems2[i,j].reshape(-1,))) 
+#%%
+spec_stat_measured= np.asarray([[weighted_avg_and_std(np.arange(len(testitems2[0,0])),np.abs(testitems2[i,j].reshape(-1,))) 
             for j in np.arange(0,3)] 
             for i in np.arange(len(testitems2))])
 # %%
 plt.figure()
-plt.hist(spec_stat[:,0,0],50)
-plt.hist(spec_stat[:,1,0],50)
-plt.hist(spec_stat[:,2,0],50)
+plt.hist(spec_stat_measured[:,0,0],np.arange(400,1000,10))
+plt.hist(spec_stat_measured[:,1,0],np.arange(400,1000,10))
+plt.hist(spec_stat_measured[:,2,0],np.arange(400,1000,10))
+# %%
+spec_stat= np.asarray([[weighted_avg_and_std(np.arange(len(testitems[0][0,0])),np.abs(testitems[0][i,j].reshape(-1,))) 
+            for j in np.arange(0,3)] 
+            for i in np.arange(len(testitems[0]))])
+# %%
+# plt.figure()
+plt.hist(spec_stat[:,0,0],np.arange(400,1000,10))
+plt.hist(spec_stat[:,1,0],np.arange(400,1000,10))
+plt.hist(spec_stat[:,2,0],np.arange(400,1000,10))
 
 # %%
+len(testitems)
 spec_stat[:,1,0]-spec_stat[:,2,0]
 # %%
 plt.hist(testitems2[:,:,1].reshape(-1,),100)

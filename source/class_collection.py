@@ -46,18 +46,18 @@ tof_ens_gpu = cp.asarray(tof_ens)
 
 
 dt2 = np.dtype([('xuv', np.float64), ('up', np.float64), ('down', np.float64)])
-measured_spectra = []
-for i in range(1, 110):
-    lll = np.fromfile('./resources/files_mathematica/' +
-                      str(i)+'.dat', dtype=dt2)
-    xuv0 = np.interp(tof_ens, orig_tof_ens, lll['xuv'], left=0, right=0)
-    xuv0 = xuv0/sum(xuv0)
-    up0 = np.interp(tof_ens, orig_tof_ens, lll['up'], left=0, right=0)
-    up0 = up0/sum(up0)
-    down0 = np.interp(tof_ens, orig_tof_ens, lll['down'], left=0, right=0)
-    down0 = down0/sum(down0)
-    measured_spectra.append(np.array([xuv0, up0, down0]))
-measured_spectra = np.asarray(measured_spectra)
+# measured_spectra = []
+# for i in range(1, 110):
+#     lll = np.fromfile('./resources/files_mathematica/' +
+#                       str(i)+'.dat', dtype=dt2)
+#     xuv0 = np.interp(tof_ens, orig_tof_ens, lll['xuv'], left=0, right=0)
+#     xuv0 = xuv0/sum(xuv0)
+#     up0 = np.interp(tof_ens, orig_tof_ens, lll['up'], left=0, right=0)
+#     up0 = up0/sum(up0)
+#     down0 = np.interp(tof_ens, orig_tof_ens, lll['down'], left=0, right=0)
+#     down0 = down0/sum(down0)
+#     measured_spectra.append(np.array([xuv0, up0, down0]))
+# measured_spectra = np.asarray(measured_spectra)
 
 
 # background noise for data augmentation is read from actual measured spectra
@@ -71,14 +71,17 @@ standard_full_time = np.linspace(-250, 250, 512)
 
 
 class Raw_data():
-    from numpy import asarray, linspace, arange
+    from numpy import asarray, linspace, arange, full, cumsum
     
     # parameters from TOF calibration
-    TOF_params = asarray([-755.693, 187.222, -39.8])
-    # TOF_response = np.fromfile("./resources/TOF_response.dat", dtype="float64")
-    # TOF_response = TOF_response/np.sum(TOF_response)
+    TOF_params = asarray([-755.6928301474567, 187.2222222222, -39.8])
+    TOF_response = np.fromfile("./resources/TOF_response.dat", dtype="float64")
+    TOF_response = TOF_response/np.sum(TOF_response)
 
-    TOF_times = linspace(0, 506+2/3, 1825)  # TOF times raw data
+    TOF_times = (cumsum(full(2500,1.))-1)/3.6e9 
+    TOF_times = TOF_times[675:]
+    # linspace(0, 506+2/3, 1825)  # TOF times raw data
+    
 
     VLS_pixels = arange(1024)  # pixels of spectrometer
 
@@ -97,12 +100,15 @@ class Raw_data():
         self.num_TOF_noise1=np.int(0+np.random.rand()*3)
 
     def get_random_response_curve(self):
-        resp_length=30;
-        tstd=2+9*np.random.rand();
-        noiselevel= 0.4*np.random.rand();
-        response=scipy.signal.gaussian(resp_length, std=tstd)
-        response=np.roll(response,np.random.randint(-(resp_length // 2)+tstd,(resp_length // 2)-tstd))
-        response+=np.abs(noiselevel*np.random.randn(resp_length))
+        response=np.abs(Raw_data.TOF_response-0.015+0.03*np.random.rand(58))
+
+        # resp_length=30;
+        # tstd=2+9*np.random.rand();
+        # noiselevel= 0.4*np.random.rand();
+        # response=scipy.signal.gaussian(resp_length, std=tstd)
+        # response=np.roll(response,np.random.randint(-(resp_length // 2)+tstd,(resp_length // 2)-tstd))
+        # response+=np.abs(noiselevel*np.random.randn(resp_length))
+
         response= response/np.sum(response)
         return response
 
@@ -172,6 +178,7 @@ class Raw_data():
 
 
         tof_new0 = np.convolve(tof_new0, self.TOF_response, mode="same")
+        tof_new0 = np.roll(tof_new0,-20) # convolution shift to the right
         tof_new0 = tof_new0/np.sum(tof_new0)
         tof_new0 =  self.add_tof_noise_hf(tof_new0)
         tof_new0 = tof_new0/np.sum(tof_new0)
@@ -179,6 +186,7 @@ class Raw_data():
 
 
         tof_new1 = np.convolve(tof_new1, self.TOF_response, mode="same")
+        tof_new1 = np.roll(tof_new1,-20) # convolution shift to the right
         tof_new1 = tof_new1/np.sum(tof_new1)
         tof_new1 =  self.add_tof_noise_hf(tof_new1)
         tof_new1 = tof_new1/np.sum(tof_new1)
@@ -216,7 +224,7 @@ class Raw_data():
 
     def energies_to_TOF_times(self, energies_eV):  # in ns
         from numpy import sqrt
-        TOF_times = self.TOF_params[0]**2/sqrt((self.TOF_params[0]**2)*(
+        TOF_times = self.TOF_params[1]+ self.TOF_params[0]**2/sqrt((self.TOF_params[0]**2)*(
             energies_eV + self.TOF_params[2]))  # funktioniert
         return TOF_times  # -min(TOF_times)
 
@@ -260,7 +268,7 @@ class Raw_data():
         sorted_TOF_signal = take_along_axis(
             TOF_signal, self.TOF_times_sort_order, axis=0)
         resampled_TOF_signal = interp(
-            Raw_data.TOF_times, self.sorted_TOF_times, sorted_TOF_signal)
+            1e9*Raw_data.TOF_times, self.sorted_TOF_times, sorted_TOF_signal)
 
         return resampled_TOF_signal
 
@@ -595,13 +603,14 @@ class Pulse(object):
         from numpy import asarray, roll
         from sklearn.preprocessing import Normalizer
 
-        aug_spectra = np.asarray(self.get_spectra(
+        aug_spectra = asarray(self.get_spectra(
             streakspeed_in_meV_per_fs, discretized=discretized))
 
 #         to reduce dependancy from XUV-photon energy
-        shiftall = randint(-20, 20)
+        # shiftall = randint(-20, 20)
+        shiftall = 0 # random wert ist ausgelagert
 #         to account for jitter
-        shiftstr = randint(0, 40)
+        shiftstr = randint(-120, 120)
 
         aug_spectra[0] = roll(aug_spectra[0], shiftall)
         aug_spectra[1] = roll(aug_spectra[1], shiftall-shiftstr)
