@@ -169,9 +169,9 @@ class Raw_data():
         vls_new = vls_new/np.sum(vls_new)
         vls_new = roll(vls_new, 0)
 
-
-        tof_new0 = roll(TOF_traces[0], 150) # roll, so that TOF and VLS are closer together
-        tof_new1 = roll(TOF_traces[1], 150)
+        r = 150
+        tof_new0 = roll(TOF_traces[0], r) # roll, so that TOF and VLS are closer together
+        tof_new1 = roll(TOF_traces[1], r)
 
         tof_new0 =  self.add_tof_noise(tof_new0,self.num_TOF_noise0)
         tof_new1 =  self.add_tof_noise(tof_new1,self.num_TOF_noise1)
@@ -295,7 +295,7 @@ class Raw_data():
         '''simple linear interpolation and summation'''
         disc_spec = np.zeros(arr_length)
         for i in positions:
-            valll = 8*np.random.rand()+0.5 # which heights are suitable? propably between 0.5 and 4.5
+            valll = 8*np.random.rand()+0.5 # which heights are suitable? propably between 0.5 and 8.5
             (divval, modval) = np.divmod(i, 1)
             divval = np.int(divval)
             disc_spec[divval] += valll*(1-modval)
@@ -308,8 +308,7 @@ class Raw_data():
     def discrete_positions(spectrum, num_points):
         cumulative_spectrum = (np.cumsum(spectrum))/np.sum(spectrum)
         indices = np.arange(len(spectrum))
-        discrete_positions = np.interp(np.random.rand(
-            num_points), cumulative_spectrum, indices)
+        discrete_positions = np.interp(np.random.rand(num_points), cumulative_spectrum, indices)
 
         return discrete_positions
 
@@ -610,7 +609,7 @@ class Pulse(object):
         # shiftall = randint(-20, 20)
         shiftall = 0 # random wert ist ausgelagert
 #         to account for jitter
-        shiftstr = randint(-120, 120)
+        shiftstr = randint(-120, 1520)
 
         aug_spectra[0] = roll(aug_spectra[0], shiftall)
         aug_spectra[1] = roll(aug_spectra[1], shiftall-shiftstr)

@@ -1,7 +1,6 @@
 # %%
-# TODO: sind die Parameter wirklich genau die selben?
-# TODO: Histogramm der Messdaten: VLS bei ca 580, TOF1 und TOF2 ca bei 680 <- genau analysieren
-
+# TODO: irgendetwas stimmt mit der Energieumrechnung nicht, das muss koriigiert werden. 
+# TODO: Oder die Energieachse von Pulse muss erweitert werden, so auf bis 130 eV
 
 
 import datetime
@@ -9,6 +8,7 @@ import os
 
 import cupy as cp
 import matplotlib.pyplot as plt
+from numba.cuda import test
 # from streaking_cal.misc import interp
 import numpy as np
 import pandas as pd
@@ -143,122 +143,13 @@ print("Num GPUs Available: ", len(
 print(tf.version.VERSION)
 
 # %%
-dt2 = np.dtype([('xuv', np.float64), ('up', np.float64), ('down', np.float64)])
-measured_spectra = []
-for i in range(1, 110):
-    lll = np.fromfile('./resources/files_mathematica/' +
-                      str(i)+'.dat', dtype=dt2)
-    xuv0 = np.interp(tof_ens, orig_tof_ens, lll['xuv'], left=0, right=0)
-    xuv0 = xuv0/sum(xuv0)
-    up0 = np.interp(tof_ens, orig_tof_ens, lll['up'], left=0, right=0)
-    up0 = up0/sum(up0)
-    down0 = np.interp(tof_ens, orig_tof_ens, lll['down'], left=0, right=0)
-    down0 = down0/sum(down0)
-    measured_spectra.append(np.array([xuv0, up0, down0]))
-measured_spectra = np.asarray(measured_spectra)
-# %%
-TOF_instrument_function = np.fromfile(
-    './resources/files_mathematica/instrument_function.dat', dtype=np.float64)
-TOF_instrument_function -= TOF_instrument_function[0]
-for num, i in enumerate(TOF_instrument_function):
-    if i < 0:
-        TOF_instrument_function[num] = 0
-TOF_instrument_function = TOF_instrument_function[TOF_instrument_function > 0]
-
-TOF_instrument_function = np.fromfile(
-    './resources/TOF_response2.dat', dtype=np.float32)
-
-# %%
-x1 = Pulse.from_GS(dT=np.random.uniform(10/2.355, 120/2.355), 
-            centralE=71.5,
-            dE=np.random.uniform(0.2/2.355, 1.8/2.355), 
-            num_electrons1=np.random.randint(15, 40), 
-            num_electrons2=np.random.randint(15, 40)
-                       )
-#%%
-plt.plot(tof_ens, x1.get_augmented_spectra(95)[1])
-(xuv, str1, str2) = x1.get_augmented_spectra(95, discretized=False)
-b1 = Raw_data(np.asarray((xuv, str1, str2)), tof_ens, x1.get_temp(), 
-            num_electrons1=x1.num_electrons1, num_electrons2=x1.num_electrons2)
-# %%
-#  define TOF-times for measured data and calculate corresponding electron energies 
-mmtimes=(np.cumsum(np.full(2500,1.))-1)/3.6e9
-mmenergies=np.square(-755.6928301474567)/np.square(mmtimes[675:]*1e9 - 187.22222222222222) +39.8
-mmtimes*1e9
-Raw_data.TOF_times*1e9
-# mmenergies
-# b1.sorted_TOF_times
-# enss=[]
-# for i in np.arange(1024)+1:
-b1.energy_axis
-#%%
-# (-755.6928301474567**2/np.sqrt(np.square(b1.TOF_params[0])*(mmenergies - 39.8)))
-# b1.get_raw_matrix()
-synth_TOF_times= b1.TOF_times
-sorting= np.argsort(synth_TOF_times, axis=0)
-sorted_TOF_times = np.take_along_axis(synth_TOF_times, sorting, axis=0)
-newsig2=b1.TOF_signal_correction(b1.spectra[2])
-sortednewig2=np.take_along_axis(newsig2, sorting, axis=0)
-# ressig3= np.roll(np.interp(1e9*Raw_data.TOF_times,sorted_TOF_times,sortednewig2),150)
-ressig3= np.roll(np.interp(b1.energies_to_TOF_times(mmenergies),sorted_TOF_times,sortednewig2),150)
-
-# plt.plot(np.roll(ressig3,-20))
-plt.plot(b1.get_raw_matrix()[1:].T)
-plt.xlim([500,700])
-
-#%%
-# b1.energies_to_TOF_times(mmenergies)
-# 1e9*Raw_data.TOF_times
-# b1.energies_to_TOF_times(mmenergies)
-# (b1.TOF_params[1]+np.square(b1.TOF_params[0])/np.sqrt(np.square(b1.TOF_params[0])*(b1.energy_axis + b1.TOF_params[2])))# == -mmtimes[675:]*1e9
-# b1.TOF_times_sort_order
-
-plt.plot(b1.spectra[1:].T)
-plt.xlim([500,800])
-plt.figure()
-plt.plot(b1.get_raw_matrix()[1:].T)
-plt.xlim([500,700])
-plt.figure()
-plt.plot(b1.calc_tof_traces().T) # should be ~ spectra[1:] reversed, seems right
-plt.xlim([425,550])
-
-
-# plt.xlim([500,700])
-
-# b1.TOF_times
-# (b1.TOF_params[1]+np.square(b1.TOF_params[0])/np.sqrt(np.square(b1.TOF_params[0])*(mmenergies + b1.TOF_params[2])))
-# mmtimes*1e9
-# calc times from energies
-# (187.22222222222222+np.square(-755.6928301474567)/np.sqrt(np.square(-755.6928301474567)*(mmenergies + b1.TOF_params[2])))
-# b1.TOF_params[2]
-# 64.3556, 339.722
-# b1.TOF_times
-# mmenergies
-# 2.77778e-1/1e9
-# mmtimes
-
-# b1.TOF_params
-#     enss.append(b1.VLS_pixel_to_energies(i))
-# %%
-
-# %%
-
-# %%
-TOF_response = np.fromfile("./resources/TOF_response.dat", dtype="float64")
-TOF_response = TOF_response/np.sum(TOF_response)
-(xuv, str1, str2) = X[0].get_augmented_spectra(95, discretized=False)
-b1 = Raw_data(np.asarray((xuv, str1, str2)), tof_ens, x1.get_temp(), 
-            num_electrons1=x1.num_electrons1, num_electrons2=x1.num_electrons2)
-rm=b1.get_raw_matrix()
-# plt.plot(rm[0])
-# plt.plot(rm[1])
-# plt.plot(rm[2])
-# plt.xlim([400,800])
-# plt.plot(b1.TOF_response)
-plt.plot(np.abs(TOF_response-0.015+0.03*np.random.rand(58)))
-tempp=TOF_response-0.015+0.03*np.random.rand(58)
-plt.plot(np.clip(tempp,0,10))
-
+gpus = tf.config.experimental.list_physical_devices('GPU')
+if gpus:
+  try:
+    tf.config.experimental.set_virtual_device_configuration(gpus[0], 
+    [tf.config.experimental.VirtualDeviceConfiguration(memory_limit=2048)])
+  except RuntimeError as e:
+    print(e)
 # %%
 # timeit
 # pbar = ProgressBar()
@@ -270,35 +161,15 @@ X = [""]*num_pulses
 y = [""]*num_pulses
 
 for i in pbar(range(num_pulses),colour = 'red', ncols= 100):
-    x1 = Pulse.from_GS(dT=np.random.uniform(10/2.355, 120/2.355), 
+    x1 = Pulse.from_GS(dT=np.random.uniform(70/2.355, 150/2.355), 
             dE=np.random.uniform(0.2/2.355, 1.8/2.355), 
             num_electrons1=np.random.randint(15, 40), 
             num_electrons2=np.random.randint(15, 40),
-            centralE=np.random.uniform(65,76)
+            centralE=np.random.uniform(65,95)
                        )
     x1.get_spectra(streakspeed, discretized=False)
     X[i] = x1
-# %%
-%matplotlib inline
-# import scipy
-# # plt.figure()
-# # plt.plot(Raw_data.TOF_response)
-# plt.figure()
-# tstd=8
-# gaussw=scipy.signal.gaussian(len(Raw_data.TOF_response), std=tstd)
-# gaussw=np.roll(gaussw,np.random.randint(-25+tstd,25-tstd))
-# gaussw+=np.abs(0.4*np.random.randn(len(Raw_data.TOF_response)))
-# gaussw= gaussw/np.sum(gaussw)
-# plt.plot(gaussw)
-x=X[17]
-(xuv, str1, str2) = x.get_augmented_spectra(0, discretized=False)
-b2 = Raw_data(np.asarray((xuv, str1, str2)), tof_ens, x.get_temp(
-            ), num_electrons1=x.num_electrons1, num_electrons2=x.num_electrons2)
-plt.plot(b2.get_raw_matrix().T)
-# %%
-#%%
-# (str11,str21)=b2.calc_tof_traces()
-# plt.plot(str21)
+
  # %%
 class CenterAround(tf.keras.constraints.Constraint):
     #   """Constrains weight tensors to be centered around `ref_value`."""
@@ -320,60 +191,58 @@ def maxLayer():
 def convLayer(filters):
     return Conv2D(filters=filters, kernel_size=(1, 7), activation="relu", strides=1, padding="same")
 
-# %%
+# %% 
 
 convdim = 128
 
-inputs = Input(shape=(3, 1825, 1), name="traces")
+enc_inputs = Input(shape=(3, 1825, 1), name="traces")
 
 
 # HIER kernel_size=(3, 500) für bessere Ergebnisse bzw. kernel_size=(1, 500) für zeilenunabh. Mustererkennung
 conv_out = Conv2D(convdim, kernel_size=(3, 500), activation="relu", strides=1, padding="same"
-                  )(inputs)
+                  )(enc_inputs)
 
 
-# # x = MaxPooling2D(pool_size=(3, 3),strides=(1,2), padding="valid")(conv_out)
-# # x2 = AveragePooling2D(pool_size=(3, 3),strides=(1,2), padding="valid")(conv_out)
 
-# # x = Subtract()([x, x2])
+enc_output = GlobalMaxPooling2D()(conv_out)
 
-x = GlobalMaxPooling2D()(conv_out)
+encoder = tf.keras.Model(enc_inputs, enc_output, name="encoder")
+encoder.summary()
+# end of encoder
+#%%
 
-# x = tf.keras.layers.LeakyReLU()(x)
+dec_inputs = Input(shape=(128), name="encoder_output")
 
-# x = Flatten()(x)
-
-x = BatchNormalization()(x)
+# start of decoder
+x = BatchNormalization()(dec_inputs)
 
 x = Dense(256, activation="relu"
           #          , kernel_constraint=CenterAround(0)
           )(x)
 
-# x= Dense(10,activation="relu"
-# #          , kernel_constraint=CenterAround(0)
-#         )(x)
 
-# x= Dense(100,activation="relu"
-# #          , kernel_constraint=CenterAround(0)
-#         )(x)
+dec_outputs = Dense(standard_full_time.shape[0], activation="softmax")(x)
+decoder = tf.keras.Model(dec_inputs, dec_outputs, name="decoder")
+decoder.summary()
+# end of decoder
+# %%
 
+encoded = encoder(enc_inputs)
+decoded = decoder(encoded)
+merged_model = tf.keras.Model(enc_inputs, decoded, name="merged_model")
 
-outputs = Dense(standard_full_time.shape[0], activation="softmax")(x)
-
-model = tf.keras.Model(inputs, outputs, name="mynet")
-model.summary()
+merged_model.summary()
 # %%
 
 wholeset = np.arange(len(X))
 
 pulses_train, pulses_test, y_train, y_test = train_test_split(
     wholeset, wholeset, test_size=0.05, random_state=1)
-params = {'batch_size': 200}
+params = {'batch_size': 250}
 train_ds = Datagenerator(pulses_train, y_train, X=X, **params)
 test_ds = Datagenerator(pulses_test, y_test, X=X, for_train=False, **params)
 
 # time2=time[abs(time)<250]
-
 # %%
 
 opt = Adam(lr=5e-3, amsgrad=True) 
@@ -382,10 +251,10 @@ lr_schedule = tf.keras.optimizers.schedules.ExponentialDecay(
 nadam = tf.keras.optimizers.Nadam(learning_rate=0.01)
 adagrad = tf.keras.optimizers.Adagrad(
     learning_rate=lr_schedule, initial_accumulator_value=0.1)
-model.compile(optimizer="nadam", loss="KLDivergence",
+merged_model.compile(optimizer="nadam", loss="KLDivergence",
               metrics=["accuracy", "mae"])
 
-history = model.fit(x=train_ds, validation_data=test_ds,
+history = merged_model.fit(x=train_ds, validation_data=test_ds,
                     #                     use_multiprocessing=True,
                     #                     workers=4,
                     epochs=40
@@ -395,16 +264,21 @@ from tensorflow.keras.layers import (AveragePooling2D, BatchNormalization,
                                      Flatten, MaxPooling2D)
 
 # %%
-# %%timeit 
-# preds=model.predict(testitems[0])
 
-# model.save('./models/RAW_mat_15-30els_70-76eV')
+# ----------------------SAVE MODELS-------------------------
 
-# model = tf.keras.models.load_model('./models/RAW_mat_15-30els_70-76eV')
+merged_model.save('./models/RAW_mat_mergedm-95')
+encoder.save('./models/RAW_mat_encoder-95')
+decoder.save('./models/RAW_mat_decoder-95')
 
-# from numba import cuda 
-# device = cuda.get_current_device()
-# device.reset()
+
+# ----------------------LOAD MODELS-------------------------
+
+# merged_model = tf.keras.models.load_model('./models/RAW_mat_mergedm')
+# encoder = tf.keras.models.load_model('./models/RAW_mat_encoder')
+# decoder = tf.keras.models.load_model('./models/RAW_mat_decoder')
+
+
 # %%
 #"nadam"
 #701 points, 5 epochs, 130000 pulses,val_loss=0.3551
@@ -418,10 +292,10 @@ from tensorflow.keras.layers import (AveragePooling2D, BatchNormalization,
 #model-normal:1401 points 25 epochs, 130000 pulses val_loss= 0.3550 (0.3550-0.3568)
 # %%
 testitems= test_ds.__getitem__(0)
-preds=model.predict(testitems[0])
+preds=merged_model.predict(testitems[0])
 y_test=testitems[1]
 # %matplotlib inline
-vv=11
+vv=88
 
 
 plt.plot(standard_full_time,y_test[vv])
@@ -437,6 +311,7 @@ plt.plot(np.arange(1825),testitems[0][vv][0])
 plt.plot(np.arange(1825),testitems[0][vv][1])
 plt.plot(np.arange(1825),testitems[0][vv][2])
 plt.xlim([500,700])
+
 # %%
 import os
 import re
@@ -472,9 +347,9 @@ for i in numbers:
 testitems2=np.reshape(np.asarray(testitems2),[len(numbers),3,-1,1])
 
 #%%
-preds=model.predict(testitems2)
+preds=merged_model.predict(testitems2)
 # %matplotlib inline
-vv=87
+vv=93
 
 # plt.plot(time,gaussian_filter(y_test[vv],10))
 
@@ -489,6 +364,128 @@ plt.plot(np.arange(1825),testitems2[vv][1])
 plt.plot(np.arange(1825),testitems2[vv][2])
 plt.plot(np.arange(1825),testitems2[vv][0])
 plt.xlim([500,700])
+
+
+# %%
+# encode synth pulses is batches of 300 and concatenate
+from source.class_collection import Datagenerator, Pulse, Raw_data
+
+num_pulses = 10000
+streakspeed = 95  # meV/fs
+X = [""]*num_pulses
+y = [""]*num_pulses
+
+for i in pbar(range(num_pulses),colour = 'red', ncols= 100):
+    x1 = Pulse.from_GS(dT=np.random.uniform(20/2.355, 120/2.355), 
+            dE=np.random.uniform(0.2/2.355, 1.8/2.355), 
+            num_electrons1=np.random.randint(15, 40), 
+            num_electrons2=np.random.randint(15, 40),
+            centralE=np.random.uniform(65,95)
+                       )
+    x1.get_spectra(streakspeed, discretized=False)
+    X[i] = x1
+
+
+wholeset = np.arange(len(X))
+
+pulses_train, pulses_test, y_train, y_test = train_test_split(
+    wholeset, wholeset, test_size=0.95, random_state=1)
+params = {'batch_size': 300}
+train_ds = Datagenerator(pulses_train, y_train, X=X, **params)
+test_ds = Datagenerator(pulses_test, y_test, X=X, for_train=False, **params)
+
+
+encoded_t0 = encoded_t
+lower_dim_input0 = lower_dim_input
+encoded_t =[encoder(test_ds.__getitem__(i)[0]) for i in range(30)]
+encoded_t = np.concatenate(encoded_t, axis = 0)
+
+# encoded_t2=encoder(testitems2[:300])
+#%%
+from sklearn.decomposition import PCA
+# pca = PCA(n_components=2)
+# pca.fit(encoded_t)
+lower_dim_input=pca.transform(encoded_t)
+synth_low= lower_dim_input
+lower_dim_input2=pca.transform(encoded_t2)
+measures_low = lower_dim_input2
+
+
+COM = lambda elements2d: np.mean(elements2d,axis=0)
+
+@njit(fastmath=True)
+def dist(coord1,coord2):
+    return np.sqrt(np.sum(np.square(coord1-coord2)))
+
+
+COM_synth=COM(synth_low)
+COM_measures=COM(measures_low)
+
+COM_rise=COM_synth-COM_measures
+
+dist(COM_synth,COM_measures)
+
+intermed_pos = [COM_measures + (i+1)*COM_rise/400 for i in range(1000)]
+
+synth_argmins=[]
+for i_pos in intermed_pos:
+    i_distances= [dist(i_pos,synth_pos) for synth_pos in synth_low]
+    # print(list(map(np.unique, np.argmin(i_distances))))
+    synth_argmins.append(np.argmin(i_distances).astype(int))
+
+synth_argmins
+indexes = np.unique(synth_argmins, return_index=True)[1]
+ordered_list_of_nearest_members=[synth_argmins[index] for index in sorted(indexes)]
+
+
+plt.scatter(lower_dim_input2[:,0],lower_dim_input2[:,1], c='r')
+plt.scatter(lower_dim_input0[:,0],lower_dim_input0[:,1], c= 'y')
+plt.scatter(lower_dim_input[:,0],lower_dim_input[:,1])
+
+
+# TODO welche Pulse wie nah sind, verändert sich mit jedem Abruf der Spektren, es muss also dort zufällig variiert werden
+
+# %%
+np.random.randint(0,100)
+# %%
+
+output_t =[merged_model(test_ds.__getitem__(i)[0]) for i in range(30)]
+output_t = np.concatenate(output_t, axis = 0)
+
+
+
+# %%
+def find_2dist(x1,y1,x2,y2):
+    return np.sqrt(np.square(x1-x2)+np.square(y1-y2))
+
+
+# %%
+# x = -0.2, y = -0.1
+nearest_sample_index=np.argmin(find_2dist(lower_dim_input[:,0],lower_dim_input[:,1],-0.2,-0.1))
+
+# %%
+
+decoder.summary()
+
+(encoded_t)
+# %%
+#  DISPLAY THE SYNTH SAMPLE THAT IS NEAREST TO THE MEASURED ONES
+
+temp_nearest=decoder(tf.convert_to_tensor([pca.inverse_transform(lower_dim_input[nearest_sample_index])]))[0]
+
+plt.figure()
+plt.plot(standard_full_time,
+        temp_nearest,
+        'orange')
+vsigma=weighted_avg_and_std(standard_full_time,temp_nearest)
+print([vsigma,2.35*vsigma[1]])
+# plt.figure()
+# plt.plot(np.arange(1825),testitems2[vv][1])
+# plt.plot(np.arange(1825),testitems2[vv][2])
+# plt.plot(np.arange(1825),testitems2[vv][0])
+# plt.xlim([500,700])
+
+
 # %%
 plt.plot(np.arange(1825),testitems[0][vv][2])
 plt.plot(np.arange(1825),testitems[0][vv][1])
@@ -523,3 +520,65 @@ plt.hist(testitems2[:,:,1].reshape(-1,),100)
 # %%
 numbers
 # %%
+from sklearn.manifold import TSNE
+# encoded_t = np.array([[-1, -1], [-2, -1], [-3, -2], [1, 1], [2, 1], [3, 2]])
+tsne = TSNE(n_components=3)
+# tsne.fit(encoded_t)
+
+t_lower_dim_input=tsne.fit_transform(np.concatenate((encoded_t, encoded_t2.numpy())))
+# t_lower_dim_input2=tsne.fit_transform(encoded_t2)
+
+synth_low = t_lower_dim_input[:9000]
+measures_low = t_lower_dim_input[9000:]
+
+# plt.scatter(synth_low[:,0],synth_low[:,1])
+# plt.scatter(measures_low[:,0],measures_low[:,1], c='r')
+
+COM = lambda elements2d: np.mean(elements2d,axis=0)
+
+@njit(fastmath=True)
+def dist(coord1,coord2):
+    return np.sqrt(np.sum(np.square(coord1-coord2)))
+
+
+
+COM_synth=COM(synth_low)
+COM_measures=COM(measures_low)
+
+COM_rise=COM_synth-COM_measures
+intermed_pos = [COM_measures + (i+1)*COM_rise/400 for i in range(1000)]
+
+
+# for all the positions find the nearest synth_pulse
+synth_argmins=[]
+for i_pos in intermed_pos:
+    # all distances to intermediate positions
+    i_distances= [dist(i_pos,synth_pos) for synth_pos in synth_low]
+    # print(list(map(np.unique, np.argmin(i_distances))))
+    synth_argmins.append(np.argmin(i_distances).astype(int))
+
+
+indexes = np.unique(synth_argmins, return_index=True)[1] # filter out doublettes
+ordered_list_of_nearest_members=[synth_argmins[index] for index in sorted(indexes)]
+
+# plt.scatter(synth_low[ordered_list_of_nearest_members,0],synth_low[ordered_list_of_nearest_members,1], c = 'y')
+
+
+# plt.scatter(t_lower_dim_input[:,0],t_lower_dim_input[:,1], c=np.concatenate((np.full(300, 0),np.full(327, 1))))
+
+#  YELLOW = measured
+#  PURPLE = synth
+
+
+
+# %%
+import numpy as np
+import matplotlib.pyplot as plt
+%matplotlib inline
+fig = plt.figure()
+ax = plt.axes(projection='3d')
+
+ax.scatter3D(synth_low[:,0],synth_low[:,1],synth_low[:,2])
+ax.scatter3D(measures_low[:,0],measures_low[:,1], measures_low[:,2], c='r')
+ax.scatter3D(synth_low[ordered_list_of_nearest_members,0],synth_low[ordered_list_of_nearest_members,1],synth_low[ordered_list_of_nearest_members,2], c= 'y')
+plt.figure()
