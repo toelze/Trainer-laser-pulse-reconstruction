@@ -2,6 +2,11 @@
 # TODO: irgendetwas stimmt mit der Energieumrechnung nicht, das muss koriigiert werden. 
 # TODO: Oder die Energieachse von Pulse muss erweitert werden, so auf bis 130 eV
 
+# TODO: wie können die wichtigsten Daten elegant mit geliefert werden beim Erzeugen eines neuen Objekt?
+# TODO: welche Daten sind bei jeder Instanz gleich / unterschiedlich?
+# TODO Raw_Data2 zu Raw_Data wandeln (Raw_Data dabei löschen?)
+# TODO neuronales Netz anpassen
+
 
 import datetime
 import os
@@ -59,7 +64,7 @@ mempool = cp.get_default_memory_pool()
 
 # from scipy.signal import find_peaks,peak_widths
 # from scipy.ndimage import gaussian_filter
-from source.class_collection import Datagenerator, Pulse, Raw_data
+from source.class_collection import Datagenerator, Pulse, Raw_Data2
 
 # def ws_reg(kernel):
 #     if kernel.shape[0] > 0:
@@ -143,6 +148,519 @@ print("Num GPUs Available: ", len(
 print(tf.version.VERSION)
 
 # %%
+from source.class_collection import Datagenerator, Pulse, Raw_Data, Measurement_Data
+
+
+#%%
+# Array[0 + (x - 1)/(ADCFreq*10^6) &, Dimensions[hdf5tof1][[2]]]
+
+
+class Raw_Data2():
+    
+    # parameters from TOF calibration
+    tof_params = np.asarray([-755.6928301474567, 187.2222222222, -39.8])
+
+    tof_times = np.asarray([(i-1)/3600e6 for i in np.arange(2500)+1]) # OK
+    zeroindx = 674 # OK
+    # TOF_to_eV = lambda t:  TOF_params[0]**2/(t - TOF_params[1])**2 - TOF_params[2]  # OK
+
+    real_tof_response = np.fromfile("./resources/TOF_response.dat", dtype="float64")
+    real_tof_response = real_tof_response/np.sum(real_tof_response)
+    ionization_potential = 21.55 #Neon 2p 
+
+    vls_pixels = np.arange(1024) + 1 # from Mathematica + indexcorrection
+    vls_enenergies = 1239.84/(vls_pixels*0.0032 + 11.41)  # VLS pix 2 nm calibration 
+    vls_enenergies -= ionization_potential
+
+    # TOF_times = (cumsum(full(2500,1.))-1)/3.6e9 
+    # TOF_times = TOF_times[675:]
+    # linspace(0, 506+2/3, 1825)  # TOF times raw data
+    
+
+    vls_pixels = np.arange(1024)  # pixels of spectrometer
+
+    def __init__(self, spectra, energies, temp_profile, num_electrons1=25, num_electrons2=25):
+        self.num_electrons1 = num_electrons1
+        self.num_electrons2 = num_electrons2
+        self.energy_axis = energies
+        # self.TOF_times = self.energies_to_TOF_times(energies)
+        self.temp_profile = temp_profile
+        self.spectra = spectra
+        self.tof_response = self.get_random_response_curve()
+
+        self.tof_energies = np.array(list(map(self.tof_to_eV,self.tof_times[self.zeroindx + 1:]*1e9)))  # OK
+
+
+        # ll = self.TOF_times[self.zeroindx +1:]*1e9
+
+        # print(ll[0])
+
+
+        # self.TOF_energies = np.asarray([self.TOF_to_eV(i) for i in ll])
+
+
+        self.calc_vls_spectrum()
+
+        self.num_tof_noise0=int(0+np.random.rand()*3) # num of stray electrons in spectra
+        self.num_tof_noise1=int(0+np.random.rand()*3)
+
+    def tof_to_eV(self,t):
+
+        return self.tof_params[0]**2/(t - self.tof_params[1])**2 - self.tof_params[2]
+
+
+    def get_random_response_curve(self):
+        response=np.abs(self.real_tof_response-0.015+0.03*np.random.rand(58))
+
+        # resp_length=30;
+        # tstd=2+9*np.random.rand();
+        # noiselevel= 0.4*np.random.rand();
+        # response=scipy.signal.gaussian(resp_length, std=tstd)
+        # response=np.roll(response,np.random.randint(-(resp_length // 2)+tstd,(resp_length // 2)-tstd))
+        # response+=np.abs(noiselevel*np.random.randn(resp_length))
+
+        response= response/np.sum(response)
+        return response
+
+    def correctints(self,spec):
+        '''from TOF times to eV'''
+        return 0.5 * self.tof_params[0] * spec[self.zeroindx + 1:]/(self.tof_energies + self.tof_params[2])**1.5
+
+    def uncorrectints(self,cspec):
+        '''from eV to TOF times'''
+        spec = cspec *(self.tof_energies + self.tof_params[[2]])**1.5/(0.5*self.tof_params[[0]])
+        spec = np.pad(spec, (self.zeroindx + 1,0),'constant',constant_values=(0, 0))
+        return spec
+
+    def eVenergies_to_tof(self,spec, energies = None):
+        '''interpolation and intensity correction to calculate a TOF signal from a spectrum'''
+        if energies is None: 
+            energies = self.energy_axis
+
+        tof = np.interp(self.tof_energies,energies,spec,0,0)
+        tof = -uncorrectints(tof)
+        return tof
+
+    def tof_to_eVenergies(self,tof,energies = None):
+        '''interpolation and intensity correction to calculate a spectrum from a TOF signal'''
+        if energies is None: 
+            energies = self.energy_axis
+
+        spec = -self.correctints(tof)
+        spec = np.interp(energies,self.tof_energies[::-1],spec[::-1],0,0)
+        return spec
+
+
+
+
+    def calc_tof_traces(self):
+        from numpy import argsort, take_along_axis, asarray
+
+        tof_traces = self.spectra[1:]
+        tof_traces = np.asarray([self.eVenergies_to_tof(tof_traces[0]),
+                                 self.eVenergies_to_tof(tof_traces[1])])
+
+
+
+
+        # self.TOF_times_sort_order = argsort(self.TOF_times, axis=0)
+        # self.sorted_TOF_times = take_along_axis(
+        #     self.TOF_times, self.TOF_times_sort_order, axis=0)
+
+        # TOF_traces = asarray(
+        #     list(map(self.TOF_signal_correction, self.spectra[1:])))
+        # TOF_traces = asarray(list(map(self.resampled_TOF_signal, TOF_traces)))
+
+
+
+        tof_traces[0] = self.discretized_spectrum(
+            tof_traces[0], self.num_electrons1)
+        # TOF_traces[0] = TOF_traces[0]/np.sum(TOF_traces[0])
+
+        tof_traces[1] = self.discretized_spectrum(
+            tof_traces[1], self.num_electrons2)
+   
+        return tof_traces
+
+    # eV to VLS pixel
+    def eVenergies_to_vls_pix(self,spec,energies = None):
+        '''interpolation to calculate a VLS signal from a spectrum'''
+        if energies is None:
+            energies = self.energy_axis
+        vls = np.interp(self.vls_enenergies,energies,spec,0,0)
+        return vls
+    # VLS pixel to eV
+
+    def vls_pix_to_eVenergies(self,vls,energies = None):
+        '''interpolation to calculate a spectrum from a VLS signal'''
+        if energies is None:
+            energies = self.energy_axis
+        spec =  np.interp(energies,self.vls_enenergies[::-1],vls[::-1],0,0)
+        return spec
+
+
+
+    def calc_vls_spectrum(self):
+        from numpy import argsort, take_along_axis
+
+        # VLS_signal = self.spectra[0]
+
+        # self.VLS_pixels = self.energies_to_VLS_pixel(self.energy_axis)
+        # self.VLS_pixels_sort_order = argsort(self.VLS_pixels, axis=0)
+        # self.sorted_VLS_pixels = take_along_axis(
+        #     self.VLS_pixels, self.VLS_pixels_sort_order, axis=0)
+
+        # self.VLS_signal = self.resampled_VLS_signal(self.VLS_signal)
+
+        self.vls_signal = self.eVenergies_to_vls_pix(self.spectra[0])
+
+        self.vls_signal = self.vls_signal/np.sum(self.vls_signal)
+
+        # self.VLS_pixels = self.VLS_pixels
+
+    def vls_finite_resolution(self,spectrum):
+        from scipy import signal
+        spectrum = np.convolve(spectrum,signal.gaussian(21, std=2),'same') # TODO is this (21+-2) correct?
+        return spectrum
+
+    def augment_vls(self):
+        from numpy import roll
+
+        aug_vls = self.vls_finite_resolution(self.vls_signal)
+        aug_vls = self.add_tof_noise_hf(aug_vls,0.00009,0.00013) # real measured noise = 0.00011
+        aug_vls = aug_vls/np.sum(aug_vls)
+
+        return aug_vls
+
+    def augment_tof(self):
+
+        aug_tof0, aug_tof1 = self.calc_tof_traces()
+
+
+        aug_tof0 = self.add_tof_noise(aug_tof0,self.num_tof_noise0)       
+        aug_tof0 = np.convolve(aug_tof0, self.tof_response, mode="same")
+        aug_tof0 = np.roll(aug_tof0,25) # convolution shift to the right
+        aug_tof0 = aug_tof0/np.sum(aug_tof0)
+        aug_tof0 =  self.add_tof_noise_hf(aug_tof0)
+        aug_tof0 = aug_tof0/np.sum(aug_tof0)
+
+
+
+        aug_tof1 = self.add_tof_noise(aug_tof1,self.num_tof_noise1)
+        aug_tof1 = np.convolve(aug_tof1, self.tof_response, mode="same")
+        aug_tof1 = np.roll(aug_tof1,25) # convolution shift to the right
+        aug_tof1 = aug_tof1/np.sum(aug_tof1)
+        aug_tof1 =  self.add_tof_noise_hf(aug_tof1)
+        aug_tof1 = aug_tof1/np.sum(aug_tof1)        
+
+
+
+        return aug_tof0, aug_tof1
+
+    def get_raw_matrix(self):
+        from numpy import roll, pad
+        from numpy import sum as npsum
+
+        vls_new = self.augment_vls()
+        aug_tof0, aug_tof1 = self.augment_tof()
+
+        tof_new0 = aug_tof0[self.zeroindx + 1:]
+        tof_new1 = aug_tof1[self.zeroindx + 1:]
+
+        vls_new = pad(vls_new, pad_width=(0, len(tof_new0)-len(self.vls_signal)))
+
+
+        r = 0
+        tof_new0 = roll(tof_new0, r) # roll, so that TOF and VLS are closer together
+        tof_new1 = roll(tof_new1, r)
+
+
+        return np.asarray([vls_new, tof_new0, tof_new1])
+
+    def add_tof_noise(self,spectrum,num_noise_peaks):
+        positions=np.random.randint(len(spectrum),size=num_noise_peaks)
+        withspikes=spectrum+self.added_spikes(positions, len(spectrum))
+
+        return withspikes
+
+    def add_tof_noise_hf(self,spectrum, lower=0.00007, upper = 0.00014):
+        """Add white noise to spectra, similar to real measurements"""
+        # 0.00007 to 0.00014 from actual measured TOF spectra
+        with_noise = np.abs(spectrum + np.random.uniform(lower,upper,1).item()*np.random.randn(len(spectrum)))
+
+        return with_noise
+
+
+
+    def get_all_tof(self):
+        """if every signal was measured over time-of-flight
+        currently not used"""
+        tof_matrix = self.get_raw_matrix()
+        vls = self.vls_signal_to_energies()
+        vls = self.tof_signal_correction(vls)
+        vls = self.resampled_tof_signal(vls)
+
+        tof_matrix[0] = vls
+
+        return tof_matrix
+
+    def energies_to_tof_times(self, energies_eV):  # in ns
+        from numpy import sqrt
+        TOF_times = self.tof_params[1]+ self.tof_params[0]**2/sqrt((self.tof_params[0]**2)*(
+            energies_eV - self.tof_params[2]))  # funktioniert
+        return TOF_times  # -min(TOF_times)
+
+    def vls_pixel_to_energies(self, vls_pixel):
+        return -21.5 + 1239.84/(11.41 + 0.0032*vls_pixel)
+
+    def energies_to_vls_pixel(self, energies_eV):
+        # calibration and 21.5 eV ionization
+        return -3565.63 + 387450/(21.5 + energies_eV)
+
+    def vls_signal_to_energies(self):
+        VLS_energies = self.vls_pixel_to_energies(self.vls_pixels)
+        sort_order = np.argsort(VLS_energies, axis=0)
+        VLS_energies = np.take_along_axis(VLS_energies, sort_order, axis=0)
+        VLS_ordered = np.take_along_axis(self.vls_signal, sort_order, axis=0)
+        VLS_resampled = np.roll(
+            np.interp(self.energy_axis, VLS_energies, VLS_ordered, left=0, right=0), -50)
+        # TODO wieso roll -50??
+
+        return VLS_resampled
+
+    # when calulating TOF_traces from energy spectra
+    def tof_signal_correction(self, signal):
+        adjusted_signal = -4 * \
+            (signal*(self.energy_axis +
+                     self.tof_params[2])**1.5)/self.tof_params[0]
+        return adjusted_signal
+
+    def resampled_vls_signal(self, VLS_signal):
+        from numpy import take_along_axis, interp
+
+        sorted_VLS_signal = take_along_axis(
+            VLS_signal, self.vls_pixels_sort_order, axis=0)
+        resampled_VLS_signal = interp(
+            Raw_Data.vls_pixels, self.sorted_vls_pixels, sorted_vls_signal)
+
+        return resampled_VLS_signal
+
+    def resampled_tof_signal(self, TOF_signal):
+        from numpy import take_along_axis, interp
+
+        sorted_TOF_signal = take_along_axis(
+            TOF_signal, self.tof_times_sort_order, axis=0)
+        resampled_tof_signal = interp(
+            1e9*Raw_Data.tof_times, self.sorted_tof_times, sorted_tof_signal)
+
+        return resampled_TOF_signal
+
+    def discretized_spectrum(self, spectrum, num_points):
+        from numpy import interp, zeros
+#         disc_spec=np.zeros(len(spectrum))
+        positions = self.discrete_positions(spectrum, num_points)
+
+
+#         for i in positions:
+#             valll=np.random.rand()+1
+#             (divval,modval)=divmod(i, 1)
+#             divval=divval.astype("int")
+#             disc_spec[divval]+=valll*(1-modval)
+#             disc_spec[divval+1]+=valll*(modval)
+
+        disc_spec = self.added_spikes(positions, len(spectrum))
+
+        return disc_spec
+
+    @staticmethod
+    @njit(fastmath=True)
+    def added_spikes(positions, arr_length):
+        '''simple linear interpolation and summation'''
+        disc_spec = np.zeros(arr_length)
+        for i in positions:
+            valll = 8*np.random.rand()+0.5 # which heights are suitable? propably between 0.5 and 8.5
+            (divval, modval) = np.divmod(i, 1)
+            divval = int(divval)
+            disc_spec[divval] += valll*(1-modval)
+            disc_spec[divval+1] += valll*(modval)
+
+        return disc_spec
+
+    @staticmethod
+    @njit(fastmath=True)
+    def discrete_positions(spectrum, num_points):
+        cumulative_spectrum = (np.cumsum(spectrum))/np.sum(spectrum)
+        indices = np.arange(len(spectrum))
+        discrete_positions = np.interp(np.random.rand(num_points), cumulative_spectrum, indices)
+
+        return discrete_positions
+
+    def get_temp(self):
+        return self.temp_profile
+    
+    def to_Measurement_Data(self):
+        measurement_obj = Measurement_Data(self.augment_vls(), self.augment_tof(),self.tof_times) # OK
+
+
+        return measurement_obj
+
+# %%
+# vlspix = np.arange(1024) + 1 # from Mathematica + indexcorrection
+# VLSens = 1239.84/((vlspix)*0.0032 + 11.41) - 21.55 
+
+
+# eV to VLS pixel
+def eVenergies_to_VLSpix(spec,energies = [0]):
+    if len(energies) == 1:
+        energies = tof_ens
+    vls = np.interp(VLSens,energies,spec,0,0)
+    return vls
+# VLS pixel to eV
+
+def VLSpix_to_eVenergies(vls,energies = [0]):
+    if len(energies) == 1:
+        energies = tof_ens
+    spec =  np.interp(energies,VLSens[::-1],vls[::-1],0,0)
+    return spec
+VLSens
+# %%
+
+test = np.exp(-1/2 * ((np.arange(1024)+1)-300)**2/100**2)
+plt.plot((eVenergies_to_VLSpix(VLSpix_to_eVenergies(test))-test)[2:])
+# %%
+# cc = eVenergies_to_VLSpix(raw_obj.spectra[0])
+# cc = cc / sum(cc)
+# plt.plot(cc)
+plt.plot(raw_obj.vls_signal)
+plt.plot(raw_obj.augment_vls())
+plt.plot(raw_obj.augment_tof()[1][raw_obj.zeroindx + 1:])
+print(sum(raw_obj.vls_signal))
+# %%
+# %%
+nens= np.linspace(50,100,501)
+plt.plot(nens,raw_obj.vls_pix_to_eVenergies(raw_obj.augment_vls(),nens))
+# plt.plot(nens,raw_obj.tof_to_eVenergies(raw_obj.augment_tof()[0],nens))
+# plt.plot(nens,raw_obj.tof_to_eVenergies(raw_obj.augment_tof()[1],nens))
+# plt.plot(tof_ens,spp[1])
+# plt.plot(tof_ens,spp[2])
+
+plt.xlim([50,90])
+
+#%%
+nens= np.linspace(50,100,501)
+# plt.plot(nens,raw_obj.vls_pix_to_eVenergies(raw_obj.augment_vls(),nens))
+# plt.plot(nens,raw_obj.tof_to_eVenergies(raw_obj.augment_tof()[0],nens))
+# plt.plot(nens,raw_obj.tof_to_eVenergies(raw_obj.augment_tof()[1],nens))
+
+raw_obj.to_Measurement_Data().tof_in_data[1][675:].shape
+# raw_obj.to_Measurement_Data().tof_in_times.shape
+# raw_obj.to_Measurement_Data().tof_energies.shape
+
+# %%
+nens= np.linspace(50,100,501)
+# plt.plot(nens,raw_obj.vls_pix_to_eVenergies(raw_obj.augment_vls(),nens))
+# plt.plot(nens,raw_obj.tof_to_eVenergies(raw_obj.augment_tof()[1],nens))
+ppp = raw_obj.to_Measurement_Data()
+plt.plot(ppp.energy_axis ,ppp.spectra[0])
+plt.plot(ppp.energy_axis ,ppp.spectra[1])
+plt.plot(ppp.energy_axis ,ppp.spectra[2])
+
+plt.xlim([50,90])
+
+#%%
+ppp.tof_in_times
+Raw_Data2.tof_times
+
+#%%
+def correctints(spec):
+    '''from TOF times to eV'''
+    return 0.5 * TOF_params[0] * spec[zeroindx + 1:]/(TOF_energies + TOF_params[2])**1.5
+
+def uncorrectints(cspec):
+    '''from eV to TOF times'''
+    spec = cspec *(TOF_energies + TOF_params[[2]])**1.5/(0.5*TOF_params[[0]])
+    spec = np.pad(spec, (zeroindx+1,0),'constant',constant_values=(0, 0))
+    return spec
+
+def eVenergies_to_TOF(spec,energies):
+    tof = np.interp(TOF_energies,energies,spec,0,0)
+    tof = -uncorrectints(tof)
+    return tof
+
+def TOF_to_eVenergies(tof,energies):
+    spec = -correctints(tof)
+    spec = np.interp(energies,TOF_energies[::-1],spec[::-1],0,0)
+    return spec
+
+
+TOF_params = np.asarray([-755.6928301474567, 187.2222222222, -39.8])
+
+TOF_times = np.asarray([(i-1)/3600e6 for i in np.arange(2500)+1]) # OK
+zeroindx = 674 # OK
+TOF_to_eV = lambda t:  TOF_params[0]**2/(t - TOF_params[1])**2 - TOF_params[2]  # OK
+TOF_energies = np.array(list(map(TOF_to_eV,TOF_times[zeroindx + 1:]*1e9)))  # OK
+# correctints = lambda spec: 0.5 * TOF_params[0] * spec[zeroindx + 1:]/(TOF_energies + TOF_params[2])**1.5 # OK
+# uncorrectints = lambda cspec: cspec *(energies1 + TOF_params[[2]])**1.5/(0.5*TOF_params[[0]])
+newens = np.arange(60,90.1,0.1)
+
+test = np.asarray([-500*np.exp(-1/2 *(i - 1150)**2/20**2) for i in np.arange(2500)+1]) # OK
+test2 = np.interp(newens,TOF_energies[::-1],correctints(test)[::-1]) # OK
+test2 = test2/np.sum(test2) #OK
+
+
+
+# way: eV -> toftimes: eV->interp-> eVnew->uncorrectint -> tof
+# way tof -> correctints -> eVnew -> interp -> eV
+
+
+
+
+# plt.plot(newens,test2)
+# test2[140]
+yy =np.argmax(test2)
+# len(np.ones(2500)[zeroindx + 1 : -1])
+
+spp =X[2].get_augmented_spectra(95)
+
+
+
+raw_obj = Raw_Data2(spp, tof_ens, X[0].get_temp(),
+                 num_electrons1=X[0].num_electrons1, num_electrons2= X[0].num_electrons2)
+
+# eVenergies_to_TOF()
+(xuv,str1,str2) = spp
+
+# plt.plot(d.get_raw_matrix()[1])
+
+str11=eVenergies_to_TOF(str1,tof_ens)
+
+
+# plt.plot(-str11[::-1])
+# plt.plot(0.0001*raw_obj.calc_tof_traces()[1])
+# plt.xlim([0,500])
+#  (0.5 params3[[1]] spec[[zeroindx + 1 ;; -1]])/(energyax11 + params3[[3]])^1.5
+
+len(str11[zeroindx + 1:])
+
+# %%
+
+ff= TOF_to_eVenergies(eVenergies_to_TOF(raw_obj.spectra[2],np.linspace(40, 110, 1401)), tof_ens)
+ff = ff/ sum(ff)
+plt.plot(tof_ens,ff)
+plt.plot(np.linspace(40, 110, 1401),raw_obj.spectra[2])
+
+pp = raw_obj.eVenergies_to_tof(raw_obj.spectra[2])
+pp = raw_obj.tof_to_eVenergies(pp)
+pp = pp / sum(pp)
+plt.plot(raw_obj.energy_axis,pp)
+
+dd = raw_obj.augment_tof()[1]
+dd = raw_obj.tof_to_eVenergies(dd,tof_ens)
+dd = dd / sum(dd)
+plt.plot(tof_ens,dd)
+
+
+# %%
 gpus = tf.config.experimental.list_physical_devices('GPU')
 if gpus:
   try:
@@ -165,12 +683,27 @@ for i in pbar(range(num_pulses),colour = 'red', ncols= 100):
             dE=np.random.uniform(0.2/2.355, 1.8/2.355), 
             num_electrons1=np.random.randint(15, 40), 
             num_electrons2=np.random.randint(15, 40),
-            centralE=np.random.uniform(65,95)
+            centralE=np.random.uniform(65,75)
                        )
     x1.get_spectra(streakspeed, discretized=False)
     X[i] = x1
+# %%
+t= X[0].to_Raw_Data(95).to_Measurement_Data()
+print(t.tof_eVs)
+plt.plot(t.energy_axis,t.get_eV_tof()[0])
+# %%
+(xuv,str1,str2) = X[0].get_augmented_spectra(95)
+d = X[0].to_Raw_Data(95)
+t= d.to_Measurement_Data()
+print(d.TOF_times)
 
- # %%
+(xuv,str1,str2)=X[0].get_augmented_spectra(95)
+plt.plot(tof_ens,str1)
+plt.plot(t.energy_axis,10*t.get_eV_tof()[0])
+# print(X[3].to_Raw_Data(95).TOF_times)
+print(t.tof_in_times)
+print(Raw_Data.TOF_times*10**9)
+# %%
 class CenterAround(tf.keras.constraints.Constraint):
     #   """Constrains weight tensors to be centered around `ref_value`."""
 
@@ -183,7 +716,7 @@ class CenterAround(tf.keras.constraints.Constraint):
 
     def get_config(self):
         return {'ref_value': self.ref_value}
-
+# %%
 # %%
 def maxLayer():
     return MaxPooling2D(pool_size=(8,8),strides=(1,8),padding="same")
@@ -195,11 +728,11 @@ def convLayer(filters):
 
 convdim = 128
 
-enc_inputs = Input(shape=(3, 1825, 1), name="traces")
+enc_inputs = Input(shape=(3, 301, 1), name="traces")
 
 
 # HIER kernel_size=(3, 500) für bessere Ergebnisse bzw. kernel_size=(1, 500) für zeilenunabh. Mustererkennung
-conv_out = Conv2D(convdim, kernel_size=(3, 500), activation="relu", strides=1, padding="same"
+conv_out = Conv2D(convdim, kernel_size=(3, 250), activation="relu", strides=1, padding="same"
                   )(enc_inputs)
 
 
@@ -257,7 +790,7 @@ merged_model.compile(optimizer="nadam", loss="KLDivergence",
 history = merged_model.fit(x=train_ds, validation_data=test_ds,
                     #                     use_multiprocessing=True,
                     #                     workers=4,
-                    epochs=40
+                    epochs=100
                     )
 # %%
 from tensorflow.keras.layers import (AveragePooling2D, BatchNormalization,
@@ -267,9 +800,9 @@ from tensorflow.keras.layers import (AveragePooling2D, BatchNormalization,
 
 # ----------------------SAVE MODELS-------------------------
 
-merged_model.save('./models/RAW_mat_mergedm-95')
-encoder.save('./models/RAW_mat_encoder-95')
-decoder.save('./models/RAW_mat_decoder-95')
+# merged_model.save('./models/RAW_mat_mergedm-95')
+# encoder.save('./models/RAW_mat_encoder-95')
+# decoder.save('./models/RAW_mat_decoder-95')
 
 
 # ----------------------LOAD MODELS-------------------------
@@ -295,7 +828,7 @@ testitems= test_ds.__getitem__(0)
 preds=merged_model.predict(testitems[0])
 y_test=testitems[1]
 # %matplotlib inline
-vv=88
+vv=26
 
 
 plt.plot(standard_full_time,y_test[vv])
@@ -307,10 +840,10 @@ plt.plot(standard_full_time,preds[vv],'orange')
 
 plt.figure()
 # plt.plot(tof_ens,testitems[0][vv][0])
-plt.plot(np.arange(1825),testitems[0][vv][0])
-plt.plot(np.arange(1825),testitems[0][vv][1])
-plt.plot(np.arange(1825),testitems[0][vv][2])
-plt.xlim([500,700])
+plt.plot(np.arange(301),testitems[0][vv][0])
+plt.plot(np.arange(301),testitems[0][vv][1])
+plt.plot(np.arange(301),testitems[0][vv][2])
+# plt.xlim([500,700])
 
 # %%
 import os
@@ -368,7 +901,7 @@ plt.xlim([500,700])
 
 # %%
 # encode synth pulses is batches of 300 and concatenate
-from source.class_collection import Datagenerator, Pulse, Raw_data
+from source.class_collection import Datagenerator, Pulse, Raw_Data
 
 num_pulses = 10000
 streakspeed = 95  # meV/fs
@@ -574,7 +1107,7 @@ ordered_list_of_nearest_members=[synth_argmins[index] for index in sorted(indexe
 # %%
 import numpy as np
 import matplotlib.pyplot as plt
-%matplotlib inline
+# %matplotlib inline
 fig = plt.figure()
 ax = plt.axes(projection='3d')
 
