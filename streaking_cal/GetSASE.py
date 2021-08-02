@@ -1,5 +1,13 @@
-def GetSASE(CentralEnergy, dE_FWHM, dt_FWHM, samples=0, onlyT=False):
-    import numpy as np
+from typing import Tuple
+import cupy as cp
+import numpy as np
+
+def GetSASE(CentralEnergy: float,
+            dE_FWHM: float, 
+            dt_FWHM: float, 
+            samples: int = 0, 
+            onlyT: bool = False) -> Tuple[cp.ndarray, cp.ndarray, cp.ndarray, cp.ndarray]:
+    
     from scipy.interpolate import interp1d
 
     h=4.135667662 #in eV*fs
@@ -43,9 +51,12 @@ def GetSASE(CentralEnergy, dE_FWHM, dt_FWHM, samples=0, onlyT=False):
     else:
         return newEaxis, EnOutput, newTaxis, TOutput
     
-def GetSASE_gpu(CentralEnergy, dE_FWHM, dt_FWHM, samples=0, onlyT=False):
+def GetSASE_gpu(CentralEnergy: float, 
+                dE_FWHM: float, 
+                dt_FWHM: float, 
+                samples: int = 0, 
+                onlyT: bool = False) -> Tuple[cp.ndarray, cp.ndarray, cp.ndarray, cp.ndarray]:
     from cupy import interp
-    import cupy as cp
     h=4.135667662 #in eV*fs
     dE=dE_FWHM/2.355 #in eV, converts to sigma
     dt=dt_FWHM/2.355 #in fs, converts to sigma

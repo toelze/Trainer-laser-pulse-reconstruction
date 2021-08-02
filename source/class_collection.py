@@ -5,6 +5,7 @@ from tensorflow.keras.utils import Sequence
 # from streaking_cal.misc import interp
 from cupy import interp
 import cupy as cp
+from typing import List
 
 import pandas as pd
 
@@ -40,7 +41,7 @@ noisepeak = np.fromfile('./resources/noisepeak.dat', dtype="float64")
 # noisepeak=(df0[1].values/sum(df0[1]))[orig_tof_ens<61]
 noisepeak_gpu = cp.asarray(noisepeak)
 
-peak_max_y = orig_tof_ens[len(noisepeak)]-orig_tof_ens[0]
+# peak_max_y = orig_tof_ens[len(noisepeak)]-orig_tof_ens[0]
 tof_ens = np.linspace(40, 110, 1401)
 tof_ens_gpu = cp.asarray(tof_ens)
 
@@ -60,9 +61,9 @@ dt2 = np.dtype([('xuv', np.float64), ('up', np.float64), ('down', np.float64)])
 # measured_spectra = np.asarray(measured_spectra)
 
 
-# background noise for data augmentation is read from actual measured spectra
-measurednoise_train = np.loadtxt("./resources/measurednoise_train.txt")
-measurednoise_val = np.loadtxt("./resources/measurednoise_val.txt")
+# # background noise for data augmentation is read from actual measured spectra
+# measurednoise_train = np.loadtxt("./resources/measurednoise_train.txt")
+# measurednoise_val = np.loadtxt("./resources/measurednoise_val.txt")
 
 
 # Pulse class returns temporal profile on basis of this time axis
@@ -328,6 +329,40 @@ class Raw_Data():
 
 # %%
 
+class PulseProperties:
+    
+    def __init__(self, fwhm_t: float, fwhm_E: float, num_electrons0: int, num_electrons1: int, centralE: float):
+        from streaking_cal.GetSASE import GetSASE_gpu as GS # TODO noGPU solution missing
+
+        self.dE = fwhm_E/2.355 
+        self.dT = fwhm_t/2.355
+        self.fwhm_t = fwhm_t
+        self.fwhm_E = fwhm_E
+        self.num_electrons0 = num_electrons0
+        self.num_electrons1 = num_electrons1
+        self.centralE = centralE
+        self.p0 = PulseProperties.eV_in_au(centralE)
+
+
+        (EnAxis, EnOutput, TAxis, TOutput) = GS(CentralEnergy=self.centralE,
+                                                dE_FWHM=self.fwhm_E*2**0.5,
+                                                dt_FWHM=self.fwhm_t*2**0.5,
+                                                onlyT=False)
+
+        self.enAxis = EnAxis.astype("float32")
+        self.tAxis = TAxis.astype("float32")
+        self.enOutput = EnOutput.astype("complex64")
+        self.tOutput = TOutput.astype("complex64")
+
+
+    @staticmethod
+    def fs_in_au(t): return 41.3414*t  # from fs to a.u.
+
+    @staticmethod
+    def eV_in_au(e): return 0.271106*np.sqrt(e)  # from eV to a.u.
+ 
+
+# %%
 
 class Pulse(object):
     @staticmethod
@@ -341,77 +376,66 @@ class Pulse(object):
             self.message = message
 #
 
-    def __init__(self, EnAxis, EnOutput, TAxis, TOutput, num_electrons1, num_electrons2, dE=0, dT=0):
-        from streaking_cal.statistics import weighted_avg_and_std
+    def __init__(self, pulse_props: PulseProperties):
 
-        centralE, dE = weighted_avg_and_std(
-            EnAxis.get(), cp.square(cp.abs(EnOutput)).get())
-        self.p0 = eV_in_au(centralE)
+        # from streaking_cal.statistics import weighted_avg_and_std
+        # centralE, dE = weighted_avg_and_std(
+        #     EnAxis.get(), cp.square(cp.abs(EnOutput)).get())
 
-        if dT == 0:
-            dT = weighted_avg_and_std(
-                TAxis.get(), cp.square(cp.abs(TOutput)).get())[1]
+        self.pulse_props = pulse_props
 
-        self.dE = dE
-        self.dT = dT
-        self.__spec = EnOutput
-        self.__eAxis = EnAxis
-        self.__temp = TOutput
-        self.__tAxis = TAxis
-        self.num_electrons1 = num_electrons1
-        self.num_electrons2 = num_electrons2
+        # self.__spec = EnOutput
+        # self.__eAxis = EnAxis
+        # self.__temp = TOutput
+        # self.__tAxis = TAxis
         self.__is_low_res = False
         self.__streakspeed = 0
-        del(EnAxis)
-        del(EnOutput)
-        del(TAxis)
-        del(TOutput)
 
 #     @property for read access only members
-    @classmethod
-    def from_GS(cls, dE=0.35, dT=35, centralE=73, num_electrons1=25, num_electrons2=25):
-        from streaking_cal.GetSASE import GetSASE_gpu as GS
-#         from streaking_cal.statistics import weighted_avg_and_std
+#     @classmethod
+#     def from_GS(cls, pulse_props: PulseProperties):
+#         from streaking_cal.GetSASE import GetSASE_gpu as GS
+# #         from streaking_cal.statistics import weighted_avg_and_std
 
-        (EnAxis, EnOutput, TAxis, TOutput) = GS(CentralEnergy=centralE,
-                                                dE_FWHM=2.355*dE*2**0.5,
-                                                dt_FWHM=2.355*dT*2**0.5,
-                                                onlyT=False)
-        EnAxis = EnAxis.astype("float32")
-        TAxis = TAxis.astype("float32")
-        EnOutput = EnOutput.astype("complex64")
-        TOutput = TOutput.astype("complex64")
+#         (EnAxis, EnOutput, TAxis, TOutput) = GS(CentralEnergy=pulse_props.centralE,
+#                                                 dE_FWHM=2.355*pulse_props.dE*2**0.5,
+#                                                 dt_FWHM=2.355*pulse_props.dT*2**0.5,
+#                                                 onlyT=False)
+#         EnAxis = EnAxis.astype("float32")
+#         TAxis = TAxis.astype("float32")
+#         EnOutput = EnOutput.astype("complex64")
+#         TOutput = TOutput.astype("complex64")
 
-        return cls(EnAxis, EnOutput, TAxis, TOutput, num_electrons1, num_electrons2, dE, dT)
+#         return cls(EnAxis, EnOutput, TAxis, TOutput, pulse_props)
 
-    @classmethod
-    def from_file(cls, path_temp, num_electrons1=25, num_electrons2=25):
-        TOutput = cp.fromfile(path_temp, dtype="complex64")
-        TAxis = cp.fromfile("./GS_Pulses/axis/time_axis.dat", dtype="float32")
+    # @classmethod
+    # def from_file(cls, path_temp, num_electrons1=25, num_electrons2=25):
+    #     TOutput = cp.fromfile(path_temp, dtype="complex64")
+    #     TAxis = cp.fromfile("./GS_Pulses/axis/time_axis.dat", dtype="float32")
 
-        EnOutput = cp.fft.ifft(TOutput)
-        EnAxis = cp.linspace(0, 140, 32*1024)
+    #     EnOutput = cp.fft.ifft(TOutput)
+    #     EnAxis = cp.linspace(0, 140, 32*1024)
 
-        return cls(EnAxis, EnOutput, TAxis, TOutput, num_electrons1, num_electrons2)
+    #     return cls(EnAxis, EnOutput, TAxis, TOutput, num_electrons1, num_electrons2)
 
 #     certain entries may be deleted after calculation of measured spectra
     def get_temp(self):
-        return self.__temp
+        return self.pulse_props.tOutput
 
     def get_tAxis(self):
-        return self.__tAxis
+        return self.pulse_props.tAxis
 
     def get_spec(self):
         if self.__is_low_res:
             return None
         else:
-            return self.__spec
+            return self.pulse_props.enOutput
 
     def get_eAxis(self):
         if self.__is_low_res:
             return None
         else:
-            return self.__eAxis
+            return self.pulse_props.enAxis
 
     def is_low_res(self):
         return self.__is_low_res
@@ -427,10 +451,12 @@ class Pulse(object):
 
             # in V/m; shape of Vectorpotential determines: 232000 V/m = 1 meV/fs max streakspeed
             E0 = 232000*streakspeed
-            ff1 = cp.flip(fft(self.__temp*cp.exp(-1j*fs_in_au(self.__tAxis)*(1/(2)*(self.p0*E0*p_times_A_vals_up +
-                                                                                    1*E0**2*A_square_vals_up)))))
-            ff2 = cp.flip(fft(self.__temp*cp.exp(-1j*fs_in_au(self.__tAxis)*(1/(2)*(self.p0*E0*p_times_A_vals_down +
-                                                                                    1*E0**2*A_square_vals_down)))))
+            ff1 = cp.flip(fft(self.pulse_props.tOutput*cp.exp(-1j*fs_in_au(self.pulse_props.tAxis)*
+                                                 (1/(2)*(self.pulse_props.p0*E0*p_times_A_vals_up +
+                                                         1*E0**2*A_square_vals_up)))))
+            ff2 = cp.flip(fft(self.pulse_props.tOutput*cp.exp(-1j*fs_in_au(self.pulse_props.tAxis)*
+                                                 (1/(2)*(self.pulse_props.p0*E0*p_times_A_vals_down +
+                                                         1*E0**2*A_square_vals_down)))))
 
             spectrum1 = cp.square(cp.abs(ff1))
             spectrum2 = cp.square(cp.abs(ff2))
@@ -538,19 +564,19 @@ class Pulse(object):
 #     background noise into the spectra
 
 
-    def __makenoise_train(self, maxv):
-        '''background noise used for training'''
-        from numpy.random import randint
-        from numpy import roll
-        hnoise = measurednoise_train*cp.asnumpy(maxv)
-        return roll(hnoise, np.random.randint(1, len(tof_ens)))[:len(tof_ens)]
+    # def __makenoise_train(self, maxv):
+    #     '''background noise used for training'''
+    #     from numpy.random import randint
+    #     from numpy import roll
+    #     hnoise = measurednoise_train*cp.asnumpy(maxv)
+    #     return roll(hnoise, np.random.randint(1, len(tof_ens)))[:len(tof_ens)]
 
-    def __makenoise_val(self, maxv):
-        '''background noise used for validation'''
-        from numpy.random import randint
-        from numpy import roll
-        hnoise = measurednoise_val*cp.asnumpy(maxv)
-        return roll(hnoise, np.random.randint(1, len(tof_ens)))[:len(tof_ens)]
+    # def __makenoise_val(self, maxv):
+    #     '''background noise used for validation'''
+    #     from numpy.random import randint
+    #     from numpy import roll
+    #     hnoise = measurednoise_val*cp.asnumpy(maxv)
+    #     return roll(hnoise, np.random.randint(1, len(tof_ens)))[:len(tof_ens)]
 
     def get_spectra(self, streakspeed_in_meV_per_fs, keep_originals=False, discretized=True):
         '''returns streaked spectra, measured with "number_electronsx" simulated electrons or nondiscretized as a tuple'''
@@ -558,29 +584,28 @@ class Pulse(object):
 
         if not(self.is_low_res()):
 
-            (streaked1, streaked2) = self.__get_streaked_spectra(
-                streakspeed_in_meV_per_fs)
+            (streaked1, streaked2) = self.__get_streaked_spectra(streakspeed_in_meV_per_fs)
 
-            streaked1 = interp(tof_ens_gpu, self.__eAxis, streaked1)
-            streaked2 = interp(tof_ens_gpu, self.__eAxis, streaked2)
-            xuvonly = interp(tof_ens_gpu, self.__eAxis,
-                             cp.square(cp.abs(self.__spec)))
+            streaked1 = interp(tof_ens_gpu, self.pulse_props.enAxis, streaked1)
+            streaked2 = interp(tof_ens_gpu, self.pulse_props.enAxis, streaked2)
+            xuvonly = interp(tof_ens_gpu, self.pulse_props.enAxis,
+                             cp.square(cp.abs(self.pulse_props.enOutput)))
 
             if not(keep_originals):
-                self.__eAxis = None
-                self.__spec = None
-                t_square = cp.square(cp.abs(self.__temp))
+                self.pulse_props.enAxis = None
+                self.pulse_props.enOutput = None
+                t_square = cp.square(cp.abs(self.pulse_props.tOutput))
                 t_mean, _ = weighted_avg_and_std(
-                    self.__tAxis.get(), t_square.get())
-                self.__temp = interp(cp.asarray(
-                    standard_full_time), self.__tAxis-t_mean, t_square).get()
-                self.__temp = self.__temp/cp.sum(self.__temp)
-                self.__tAxis = standard_full_time
+                    self.pulse_props.tAxis.get(), t_square.get())
+                self.pulse_props.tOutput = interp(cp.asarray(
+                    standard_full_time), self.pulse_props.tAxis-t_mean, t_square).get()
+                self.pulse_props.tOutput = self.pulse_props.tOutput/cp.sum(self.pulse_props.tOutput)
+                self.pulse_props.tAxis = standard_full_time
                 self.__is_low_res = True
                 self.__streakedspectra = np.asarray(
                     (xuvonly.get(), streaked1.get(), streaked2.get()))
                 self.__streakspeed = streakspeed_in_meV_per_fs
-                self.__tAxis = standard_full_time
+                self.pulse_props.tAxis = standard_full_time
 
             if discretized:
                 streaked1 = self.discretized_spectrum(
@@ -595,9 +620,9 @@ class Pulse(object):
         elif discretized:
             (xuvonly, streaked1, streaked2) = self.__streakedspectra
             streaked1 = self.discretized_spectrum(
-                streaked1, self.num_electrons1)
+                streaked1, self.pulse_props.num_electrons0)
             streaked2 = self.discretized_spectrum(
-                streaked2, self.num_electrons2)
+                streaked2, self.pulse_props.num_electrons1)
 
             return cp.asnumpy(xuvonly), cp.asnumpy(streaked1), cp.asnumpy(streaked2)
 
@@ -648,7 +673,7 @@ class Pulse(object):
 
     def to_Raw_Data(self,streakspeed_in_meV_per_fs):
         raw_obj = Raw_Data2(self.get_augmented_spectra(streakspeed_in_meV_per_fs), tof_ens, self.get_temp(),
-                 num_electrons1=self.num_electrons1, num_electrons2=self.num_electrons2)
+                 num_electrons1=self.pulse_props.num_electrons0, num_electrons2=self.pulse_props.num_electrons1)
         return raw_obj
 
     def to_file(self, writepath):
