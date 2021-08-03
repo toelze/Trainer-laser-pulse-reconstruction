@@ -1,5 +1,6 @@
 # %%
 
+# TODO: warum 326 statt 301 energien
 # TODO: wie können die wichtigsten Daten elegant mit geliefert werden beim Erzeugen eines neuen Objekt?
 # TODO: welche Daten sind bei jeder Instanz gleich / unterschiedlich?
 # TODO: composition: Klassen halten Daten für Pulsparameter, für statische/ variable Messumgebung,
@@ -66,7 +67,7 @@ mempool = cp.get_default_memory_pool()
 
 # from scipy.signal import find_peaks,peak_widths
 # from scipy.ndimage import gaussian_filter
-from source.class_collection import Datagenerator, Pulse, Raw_Data2, PulseProperties
+from source.class_collection import Datagenerator, StreakedData, Raw_Data2, PulseProperties
 
 # def ws_reg(kernel):
 #     if kernel.shape[0] > 0:
@@ -150,7 +151,7 @@ print("Num GPUs Available: ", len(
 print(tf.version.VERSION)
 
 # %%
-from source.class_collection import Datagenerator, Pulse, Raw_Data, Measurement_Data
+from source.class_collection import Datagenerator, StreakedData, Raw_Data, Measurement_Data
 
 
 
@@ -159,174 +160,12 @@ from source.class_collection import Datagenerator, Pulse, Raw_Data, Measurement_
 # VLSens = 1239.84/((vlspix)*0.0032 + 11.41) - 21.55 
 
 
-# eV to VLS pixel
-def eVenergies_to_VLSpix(spec,energies = [0]):
-    if len(energies) == 1:
-        energies = tof_ens
-    vls = np.interp(VLSens,energies,spec,0,0)
-    return vls
-# VLS pixel to eV
-
-def VLSpix_to_eVenergies(vls,energies = [0]):
-    if len(energies) == 1:
-        energies = tof_ens
-    spec =  np.interp(energies,VLSens[::-1],vls[::-1],0,0)
-    return spec
-# %%
-
-test = np.exp(-1/2 * ((np.arange(1024)+1)-300)**2/100**2)
-plt.plot((eVenergies_to_VLSpix(VLSpix_to_eVenergies(test))-test)[2:])
-# %%
-# cc = eVenergies_to_VLSpix(raw_obj.spectra[0])
-# cc = cc / sum(cc)
-# plt.plot(cc)
-plt.plot(raw_obj.vls_signal)
-plt.plot(raw_obj.augment_vls())
-plt.plot(raw_obj.augment_tof()[1][raw_obj.zeroindx + 1:])
-print(sum(raw_obj.vls_signal))
-# %%
-# %%
-nens= np.linspace(50,100,501)
-plt.plot(nens,raw_obj.vls_pix_to_eVenergies(raw_obj.augment_vls(),nens))
-# plt.plot(nens,raw_obj.tof_to_eVenergies(raw_obj.augment_tof()[0],nens))
-# plt.plot(nens,raw_obj.tof_to_eVenergies(raw_obj.augment_tof()[1],nens))
-# plt.plot(tof_ens,spp[1])
-# plt.plot(tof_ens,spp[2])
-
-plt.xlim([50,90])
-
-#%%
-nens= np.linspace(50,100,501)
-# plt.plot(nens,raw_obj.vls_pix_to_eVenergies(raw_obj.augment_vls(),nens))
-# plt.plot(nens,raw_obj.tof_to_eVenergies(raw_obj.augment_tof()[0],nens))
-# plt.plot(nens,raw_obj.tof_to_eVenergies(raw_obj.augment_tof()[1],nens))
-
-raw_obj.to_Measurement_Data().tof_in_data[1][675:].shape
-# raw_obj.to_Measurement_Data().tof_in_times.shape
-# raw_obj.to_Measurement_Data().tof_energies.shape
-
-# %%
-nens= np.linspace(50,100,501)
-# plt.plot(nens,raw_obj.vls_pix_to_eVenergies(raw_obj.augment_vls(),nens))
-# plt.plot(nens,raw_obj.tof_to_eVenergies(raw_obj.augment_tof()[1],nens))
-ppp = raw_obj.to_Measurement_Data()
-plt.plot(ppp.energy_axis ,ppp.spectra[0])
-plt.plot(ppp.energy_axis ,ppp.spectra[1])
-plt.plot(ppp.energy_axis ,ppp.spectra[2])
-
-plt.xlim([50,90])
-
-#%%
-ppp.tof_in_times
-Raw_Data2.tof_times
-
-#%%
-def correctints(spec):
-    '''from TOF times to eV'''
-    return 0.5 * TOF_params[0] * spec[zeroindx + 1:]/(TOF_energies + TOF_params[2])**1.5
-
-def uncorrectints(cspec):
-    '''from eV to TOF times'''
-    spec = cspec *(TOF_energies + TOF_params[[2]])**1.5/(0.5*TOF_params[[0]])
-    spec = np.pad(spec, (zeroindx+1,0),'constant',constant_values=(0, 0))
-    return spec
-
-def eVenergies_to_TOF(spec,energies):
-    tof = np.interp(TOF_energies,energies,spec,0,0)
-    tof = -uncorrectints(tof)
-    return tof
-
-def TOF_to_eVenergies(tof,energies):
-    spec = -correctints(tof)
-    spec = np.interp(energies,TOF_energies[::-1],spec[::-1],0,0)
-    return spec
-
-
-TOF_params = np.asarray([-755.6928301474567, 187.2222222222, -39.8])
-
-TOF_times = np.asarray([(i-1)/3600e6 for i in np.arange(2500)+1]) # OK
-zeroindx = 674 # OK
-TOF_to_eV = lambda t:  TOF_params[0]**2/(t - TOF_params[1])**2 - TOF_params[2]  # OK
-TOF_energies = np.array(list(map(TOF_to_eV,TOF_times[zeroindx + 1:]*1e9)))  # OK
-# correctints = lambda spec: 0.5 * TOF_params[0] * spec[zeroindx + 1:]/(TOF_energies + TOF_params[2])**1.5 # OK
-# uncorrectints = lambda cspec: cspec *(energies1 + TOF_params[[2]])**1.5/(0.5*TOF_params[[0]])
-newens = np.arange(60,90.1,0.1)
-
-test = np.asarray([-500*np.exp(-1/2 *(i - 1150)**2/20**2) for i in np.arange(2500)+1]) # OK
-test2 = np.interp(newens,TOF_energies[::-1],correctints(test)[::-1]) # OK
-test2 = test2/np.sum(test2) #OK
-
-
-
-# way: eV -> toftimes: eV->interp-> eVnew->uncorrectint -> tof
-# way tof -> correctints -> eVnew -> interp -> eV
-
-
-
-
-# plt.plot(newens,test2)
-# test2[140]
-yy =np.argmax(test2)
-# len(np.ones(2500)[zeroindx + 1 : -1])
-
-spp =X[2].get_augmented_spectra(95)
-
-
-
-raw_obj = Raw_Data2(spp, tof_ens, X[0].get_temp(),
-                 num_electrons1=X[0].num_electrons1, num_electrons2= X[0].num_electrons2)
-
-# eVenergies_to_TOF()
-(xuv,str1,str2) = spp
-
-# plt.plot(d.get_raw_matrix()[1])
-
-str11=eVenergies_to_TOF(str1,tof_ens)
-
-
-# plt.plot(-str11[::-1])
-# plt.plot(0.0001*raw_obj.calc_tof_traces()[1])
-# plt.xlim([0,500])
-#  (0.5 params3[[1]] spec[[zeroindx + 1 ;; -1]])/(energyax11 + params3[[3]])^1.5
-
-len(str11[zeroindx + 1:])
-
-# %%
-
-ff= TOF_to_eVenergies(eVenergies_to_TOF(raw_obj.spectra[2],np.linspace(40, 110, 1401)), tof_ens)
-ff = ff/ sum(ff)
-plt.plot(tof_ens,ff)
-plt.plot(np.linspace(40, 110, 1401),raw_obj.spectra[2])
-
-pp = raw_obj.eVenergies_to_tof(raw_obj.spectra[2])
-pp = raw_obj.tof_to_eVenergies(pp)
-pp = pp / sum(pp)
-plt.plot(raw_obj.energy_axis,pp)
-
-dd = raw_obj.augment_tof()[1]
-dd = raw_obj.tof_to_eVenergies(dd,tof_ens)
-dd = dd / sum(dd)
-plt.plot(tof_ens,dd)
-
-
-# %%
-gpus = tf.config.experimental.list_physical_devices('GPU')
-if gpus:
-  try:
-    tf.config.experimental.set_virtual_device_configuration(gpus[0], 
-    [tf.config.experimental.VirtualDeviceConfiguration(memory_limit=2048)])
-  except RuntimeError as e:
-    print(e)
-# %%
-cp.ndarray
-
-
 # %%
 # timeit
 # pbar = ProgressBar()
 from tqdm import tqdm as pbar
 
-num_pulses = 2000
+num_pulses = 100000
 streakspeed = 95  # meV/fs
 X = [""]*num_pulses
 y = [""]*num_pulses
@@ -338,9 +177,20 @@ for i in pbar(range(num_pulses),colour = 'red', ncols= 100):
                                  num_electrons1 = np.random.randint(15, 40), 
                                  centralE = np.random.uniform(65,75))
 
-    x1 = Pulse(pulse_props)
-    x1.get_spectra(streakspeed, discretized=False)
+    x1 = pulse_props.to_StreakedData_from_GetSASE(streakspeed = streakspeed)
+    # x1.get_spectra(streakspeed, discretized=False)
     X[i] = x1
+    
+# %%
+pp = X[25]
+dd = pp.to_Raw_Data().to_Measurement_Data()
+ff = dd.spectra
+
+
+plt.plot(pp.pulse_props.tAxis,pp.pulse_props.tOutput)
+plt.figure()
+plt.plot(dd.energy_axis,ff[1])
+plt.plot(dd.energy_axis,ff[2])
 # %%
 t= X[0].to_Raw_Data(95).to_Measurement_Data()
 print(t.tof_eVs)
@@ -478,11 +328,11 @@ from tensorflow.keras.layers import (AveragePooling2D, BatchNormalization,
 #adam 1e-3
 #model-normal:1401 points 25 epochs, 130000 pulses val_loss= 0.3550 (0.3550-0.3568)
 # %%
-testitems= test_ds.__getitem__(0)
+testitems= train_ds.__getitem__(0)
 preds=merged_model.predict(testitems[0])
 y_test=testitems[1]
 # %matplotlib inline
-vv=10
+vv=75
 
 
 plt.plot(standard_full_time,y_test[vv])
@@ -494,9 +344,9 @@ plt.plot(standard_full_time,preds[vv],'orange')
 
 plt.figure()
 # plt.plot(tof_ens,testitems[0][vv][0])
-plt.plot(np.arange(301),testitems[0][vv][0])
-plt.plot(np.arange(301),testitems[0][vv][1])
-plt.plot(np.arange(301),testitems[0][vv][2])
+plt.plot(np.arange(326),testitems[0][vv][0])
+plt.plot(np.arange(326),testitems[0][vv][1])
+plt.plot(np.arange(326),testitems[0][vv][2])
 # plt.xlim([500,700])
 
 # %%
@@ -555,7 +405,7 @@ plt.xlim([500,700])
 
 # %%
 # encode synth pulses is batches of 300 and concatenate
-from source.class_collection import Datagenerator, Pulse, Raw_Data
+from source.class_collection import Datagenerator, StreakedData, Raw_Data
 
 num_pulses = 10000
 streakspeed = 95  # meV/fs
@@ -563,7 +413,7 @@ X = [""]*num_pulses
 y = [""]*num_pulses
 
 for i in pbar(range(num_pulses),colour = 'red', ncols= 100):
-    x1 = Pulse.from_GS(dT=np.random.uniform(20/2.355, 120/2.355), 
+    x1 = StreakedData.from_GS(dT=np.random.uniform(20/2.355, 120/2.355), 
             dE=np.random.uniform(0.2/2.355, 1.8/2.355), 
             num_electrons1=np.random.randint(15, 40), 
             num_electrons2=np.random.randint(15, 40),

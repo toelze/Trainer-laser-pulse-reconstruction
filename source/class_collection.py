@@ -5,7 +5,8 @@ from tensorflow.keras.utils import Sequence
 # from streaking_cal.misc import interp
 from cupy import interp
 import cupy as cp
-from typing import List
+from typing import Tuple
+from dataclasses import dataclass
 
 import pandas as pd
 
@@ -69,743 +70,7 @@ dt2 = np.dtype([('xuv', np.float64), ('up', np.float64), ('down', np.float64)])
 # Pulse class returns temporal profile on basis of this time axis
 standard_full_time = np.loadtxt('./resources/standard_time.txt')
 standard_full_time = np.linspace(-250, 250, 512)
-
-
-class Raw_Data():
-    from numpy import asarray, linspace, arange, full, cumsum
-    
-    # parameters from TOF calibration
-    TOF_params = asarray([-755.6928301474567, 187.2222222222, -39.8])
-    TOF_response = np.fromfile("./resources/TOF_response.dat", dtype="float64")
-    TOF_response = TOF_response/np.sum(TOF_response)
-
-    TOF_times = (cumsum(full(2500,1.))-1)/3.6e9 
-    TOF_times = TOF_times[675:]
-    # linspace(0, 506+2/3, 1825)  # TOF times raw data
-    
-
-    vls_pixels = arange(1024)  # pixels of spectrometer
-
-    def __init__(self, spectra, energies, temp_profile, num_electrons1=25, num_electrons2=25):
-        self.num_electrons1 = num_electrons1
-        self.num_electrons2 = num_electrons2
-        self.energy_axis = energies
-        self.TOF_times = self.energies_to_TOF_times(energies)
-        self.temp_profile = temp_profile
-        self.spectra = spectra
-        self.TOF_response = self.get_random_response_curve()
-
-        self.calc_vls_spectrum()
-
-        self.num_TOF_noise0=np.int(0+np.random.rand()*3) # num of stray electrons in spectra
-        self.num_TOF_noise1=np.int(0+np.random.rand()*3)
-
-    def get_random_response_curve(self):
-        response=np.abs(Raw_Data.TOF_response-0.015+0.03*np.random.rand(58))
-
-        # resp_length=30;
-        # tstd=2+9*np.random.rand();
-        # noiselevel= 0.4*np.random.rand();
-        # response=scipy.signal.gaussian(resp_length, std=tstd)
-        # response=np.roll(response,np.random.randint(-(resp_length // 2)+tstd,(resp_length // 2)-tstd))
-        # response+=np.abs(noiselevel*np.random.randn(resp_length))
-
-        response= response/np.sum(response)
-        return response
-
-    def calc_tof_traces(self):
-        from numpy import argsort, take_along_axis, asarray
-
-        self.TOF_times_sort_order = argsort(self.TOF_times, axis=0)
-        self.sorted_TOF_times = take_along_axis(
-            self.TOF_times, self.TOF_times_sort_order, axis=0)
-
-        TOF_traces = asarray(
-            list(map(self.TOF_signal_correction, self.spectra[1:])))
-        TOF_traces = asarray(list(map(self.resampled_TOF_signal, TOF_traces)))
-        TOF_traces[0] = self.discretized_spectrum(
-            TOF_traces[0], self.num_electrons1)
-        # TOF_traces[0] = TOF_traces[0]/np.sum(TOF_traces[0])
-
-        TOF_traces[1] = self.discretized_spectrum(
-            TOF_traces[1], self.num_electrons2)
-   
-        return TOF_traces
-
-    def calc_vls_spectrum(self):
-        from numpy import argsort, take_along_axis
-
-        self.VLS_signal = self.spectra[0]
-
-        self.vls_pixels = self.energies_to_VLS_pixel(self.energy_axis)
-        self.VLS_pixels_sort_order = argsort(self.vls_pixels, axis=0)
-        self.sorted_VLS_pixels = take_along_axis(
-            self.vls_pixels, self.VLS_pixels_sort_order, axis=0)
-
-        self.VLS_signal = self.resampled_VLS_signal(self.VLS_signal)
-        self.VLS_signal = self.VLS_signal/np.sum(self.VLS_signal)
-
-        self.vls_pixels = Raw_Data.vls_pixels
-
-    def vls_finite_resolution(self,spectrum):
-        from scipy import signal
-        spectrum = np.convolve(spectrum,signal.gaussian(21, std=2),'same') # TODO is this (21+-2) correct?
-        return spectrum
-
-    def augment_vls(self):
-        from numpy import roll
-
-        aug_vls = self.vls_finite_resolution(self.VLS_signal)
-        aug_vls = self.add_tof_noise_hf(aug_vls,0.00009,0.00013) # real measured noise = 0.00011
-        aug_vls = aug_vls/np.sum(aug_vls)
-
-        return aug_vls
-
-    def augment_tof(self):
-
-        aug_tof0, aug_tof1 = self.calc_tof_traces()
-
-        aug_tof0 = self.add_tof_noise(aug_tof0,self.num_TOF_noise0)       
-        aug_tof0 = np.convolve(aug_tof0, self.TOF_response, mode="same")
-        aug_tof0 = np.roll(aug_tof0,-20) # convolution shift to the right
-        aug_tof0 = aug_tof0/np.sum(aug_tof0)
-        aug_tof0 =  self.add_tof_noise_hf(aug_tof0)
-        aug_tof0 = aug_tof0/np.sum(aug_tof0)
-
-
-
-        aug_tof1 = self.add_tof_noise(aug_tof1,self.num_TOF_noise1)
-        aug_tof1 = np.convolve(aug_tof1, self.TOF_response, mode="same")
-        aug_tof1 = np.roll(aug_tof1,-20) # convolution shift to the right
-        aug_tof1 = aug_tof1/np.sum(aug_tof1)
-        aug_tof1 =  self.add_tof_noise_hf(aug_tof1)
-        aug_tof1 = aug_tof1/np.sum(aug_tof1)
-
-
-        return aug_tof0, aug_tof1
-
-    def get_raw_matrix(self):
-        from numpy import roll, pad
-        from numpy import sum as npsum
-
-        vls_new = self.augment_vls()
-        tof_new0, tof_new1 = self.augment_tof()
-
-        vls_new = pad(vls_new, pad_width=(0, len(tof_new0)-len(self.VLS_signal)))
-
-
-        r = 150
-        tof_new0 = roll(tof_new0, r) # roll, so that TOF and VLS are closer together
-        tof_new1 = roll(tof_new1, r)
-
-
-        return np.asarray([vls_new, tof_new0, tof_new1])
-
-    def add_tof_noise(self,spectrum,num_noise_peaks):
-        positions=np.random.randint(len(spectrum),size=num_noise_peaks)
-        withspikes=spectrum+self.added_spikes(positions, len(spectrum))
-
-        return withspikes
-
-    def add_tof_noise_hf(self,spectrum, lower=0.00007, upper = 0.00014):
-        """Add white noise to spectra, similar to real measurements"""
-        # 0.00007 to 0.00014 from actual measured TOF spectra
-        with_noise = np.abs(spectrum + np.random.uniform(lower,upper,1).item()*np.random.randn(len(spectrum)))
-
-        return with_noise
-
-
-
-    def get_all_tof(self):
-        """if every signal was measured over time-of-flight
-        currently not used"""
-        tof_matrix = self.get_raw_matrix()
-        VLS = self.VLS_signal_to_energies()
-        VLS = self.TOF_signal_correction(VLS)
-        VLS = self.resampled_TOF_signal(VLS)
-
-        tof_matrix[0] = VLS
-
-        return tof_matrix
-
-    def energies_to_TOF_times(self, energies_eV):  # in ns
-        from numpy import sqrt
-        TOF_times = self.TOF_params[1]+ self.TOF_params[0]**2/sqrt((self.TOF_params[0]**2)*(
-            energies_eV - self.TOF_params[2]))  # funktioniert
-        return TOF_times  # -min(TOF_times)
-
-    def VLS_pixel_to_energies(self, vls_pixel):
-        return -21.5 + 1239.84/(11.41 + 0.0032*vls_pixel)
-
-    def energies_to_VLS_pixel(self, energies_eV):
-        # calibration and 21.5 eV ionization
-        return -3565.63 + 387450/(21.5 + energies_eV)
-
-    def VLS_signal_to_energies(self):
-        VLS_energies = self.VLS_pixel_to_energies(self.vls_pixels)
-        sort_order = np.argsort(VLS_energies, axis=0)
-        VLS_energies = np.take_along_axis(VLS_energies, sort_order, axis=0)
-        VLS_ordered = np.take_along_axis(self.VLS_signal, sort_order, axis=0)
-        VLS_resampled = np.roll(
-            np.interp(self.energy_axis, VLS_energies, VLS_ordered, left=0, right=0), -50)
-        # TODO wieso roll -50??
-
-        return VLS_resampled
-
-    # when calulating TOF_traces from energy spectra
-    def TOF_signal_correction(self, signal):
-        adjusted_signal = -4 * \
-            (signal*(self.energy_axis +
-                     self.TOF_params[2])**1.5)/self.TOF_params[0]
-        return adjusted_signal
-
-    def resampled_VLS_signal(self, VLS_signal):
-        from numpy import take_along_axis, interp
-
-        sorted_VLS_signal = take_along_axis(
-            VLS_signal, self.VLS_pixels_sort_order, axis=0)
-        resampled_VLS_signal = interp(
-            Raw_Data.vls_pixels, self.sorted_VLS_pixels, sorted_VLS_signal)
-
-        return resampled_VLS_signal
-
-    def resampled_TOF_signal(self, TOF_signal):
-        from numpy import take_along_axis, interp
-
-        sorted_TOF_signal = take_along_axis(
-            TOF_signal, self.TOF_times_sort_order, axis=0)
-        resampled_TOF_signal = interp(
-            1e9*Raw_Data.TOF_times, self.sorted_TOF_times, sorted_TOF_signal)
-
-        return resampled_TOF_signal
-
-    def discretized_spectrum(self, spectrum, num_points):
-        from numpy import interp, zeros
-#         disc_spec=np.zeros(len(spectrum))
-        positions = self.discrete_positions(spectrum, num_points)
-
-
-#         for i in positions:
-#             valll=np.random.rand()+1
-#             (divval,modval)=divmod(i, 1)
-#             divval=divval.astype("int")
-#             disc_spec[divval]+=valll*(1-modval)
-#             disc_spec[divval+1]+=valll*(modval)
-
-        disc_spec = self.added_spikes(positions, len(spectrum))
-
-        return disc_spec
-
-    @staticmethod
-    @njit(fastmath=True)
-    def added_spikes(positions, arr_length):
-        '''simple linear interpolation and summation'''
-        disc_spec = np.zeros(arr_length)
-        for i in positions:
-            valll = 8*np.random.rand()+0.5 # which heights are suitable? propably between 0.5 and 8.5
-            (divval, modval) = np.divmod(i, 1)
-            divval = np.int(divval)
-            disc_spec[divval] += valll*(1-modval)
-            disc_spec[divval+1] += valll*(modval)
-
-        return disc_spec
-
-    @staticmethod
-    @njit(fastmath=True)
-    def discrete_positions(spectrum, num_points):
-        cumulative_spectrum = (np.cumsum(spectrum))/np.sum(spectrum)
-        indices = np.arange(len(spectrum))
-        discrete_positions = np.interp(np.random.rand(num_points), cumulative_spectrum, indices)
-
-        return discrete_positions
-
-    def get_temp(self):
-        return self.temp_profile
-    
-    def to_Measurement_Data(self):
-        measurement_obj = Measurement_Data(self.augment_vls(), self.augment_tof(),Raw_Data.TOF_times)
-
-        return measurement_obj
-
 # %%
-
-class PulseProperties:
-    
-    def __init__(self, fwhm_t: float, fwhm_E: float, num_electrons0: int, num_electrons1: int, centralE: float):
-        from streaking_cal.GetSASE import GetSASE_gpu as GS # TODO noGPU solution missing
-
-        self.dE = fwhm_E/2.355 
-        self.dT = fwhm_t/2.355
-        self.fwhm_t = fwhm_t
-        self.fwhm_E = fwhm_E
-        self.num_electrons0 = num_electrons0
-        self.num_electrons1 = num_electrons1
-        self.centralE = centralE
-        self.p0 = PulseProperties.eV_in_au(centralE)
-
-
-        (EnAxis, EnOutput, TAxis, TOutput) = GS(CentralEnergy=self.centralE,
-                                                dE_FWHM=self.fwhm_E*2**0.5,
-                                                dt_FWHM=self.fwhm_t*2**0.5,
-                                                onlyT=False)
-
-        self.enAxis = EnAxis.astype("float32")
-        self.tAxis = TAxis.astype("float32")
-        self.enOutput = EnOutput.astype("complex64")
-        self.tOutput = TOutput.astype("complex64")
-
-
-    @staticmethod
-    def fs_in_au(t): return 41.3414*t  # from fs to a.u.
-
-    @staticmethod
-    def eV_in_au(e): return 0.271106*np.sqrt(e)  # from eV to a.u.
- 
-
-# %%
-
-class Pulse(object):
-    @staticmethod
-    def fs_in_au(t): return 41.3414*t  # from fs to a.u.
-    @staticmethod
-    def eV_in_au(e): return 0.271106*np.sqrt(e)  # from eV to a.u.
-    h = 4.135667662  # in eV*fs
-
-    class Data_Nonexisting_Error(Exception):
-        def __init__(self, message):
-            self.message = message
-#
-
-    def __init__(self, pulse_props: PulseProperties):
-
-        # from streaking_cal.statistics import weighted_avg_and_std
-        # centralE, dE = weighted_avg_and_std(
-        #     EnAxis.get(), cp.square(cp.abs(EnOutput)).get())
-
-        self.pulse_props = pulse_props
-
-        # self.__spec = EnOutput
-        # self.__eAxis = EnAxis
-        # self.__temp = TOutput
-        # self.__tAxis = TAxis
-        self.__is_low_res = False
-        self.__streakspeed = 0
-
-#     @property for read access only members
-#     @classmethod
-#     def from_GS(cls, pulse_props: PulseProperties):
-#         from streaking_cal.GetSASE import GetSASE_gpu as GS
-# #         from streaking_cal.statistics import weighted_avg_and_std
-
-#         (EnAxis, EnOutput, TAxis, TOutput) = GS(CentralEnergy=pulse_props.centralE,
-#                                                 dE_FWHM=2.355*pulse_props.dE*2**0.5,
-#                                                 dt_FWHM=2.355*pulse_props.dT*2**0.5,
-#                                                 onlyT=False)
-#         EnAxis = EnAxis.astype("float32")
-#         TAxis = TAxis.astype("float32")
-#         EnOutput = EnOutput.astype("complex64")
-#         TOutput = TOutput.astype("complex64")
-
-#         return cls(EnAxis, EnOutput, TAxis, TOutput, pulse_props)
-
-    # @classmethod
-    # def from_file(cls, path_temp, num_electrons1=25, num_electrons2=25):
-    #     TOutput = cp.fromfile(path_temp, dtype="complex64")
-    #     TAxis = cp.fromfile("./GS_Pulses/axis/time_axis.dat", dtype="float32")
-
-    #     EnOutput = cp.fft.ifft(TOutput)
-    #     EnAxis = cp.linspace(0, 140, 32*1024)
-
-    #     return cls(EnAxis, EnOutput, TAxis, TOutput, num_electrons1, num_electrons2)
-
-#     certain entries may be deleted after calculation of measured spectra
-    def get_temp(self):
-        return self.pulse_props.tOutput
-
-    def get_tAxis(self):
-        return self.pulse_props.tAxis
-
-    def get_spec(self):
-        if self.__is_low_res:
-            return None
-        else:
-            return self.pulse_props.enOutput
-
-    def get_eAxis(self):
-        if self.__is_low_res:
-            return None
-        else:
-            return self.pulse_props.enAxis
-
-    def is_low_res(self):
-        return self.__is_low_res
-
-    def __get_streaked_spectra(self, streakspeed):
-        if self.is_low_res == True:
-            return None
-        else:
-            from cupy.fft import fft
-
-            def fs_in_au(t): return 41.3414*t  # from fs to a.u.
-            # def eV_in_au(e): return 0.271106*np.sqrt(e)  # from eV to a.u.
-
-            # in V/m; shape of Vectorpotential determines: 232000 V/m = 1 meV/fs max streakspeed
-            E0 = 232000*streakspeed
-            ff1 = cp.flip(fft(self.pulse_props.tOutput*cp.exp(-1j*fs_in_au(self.pulse_props.tAxis)*
-                                                 (1/(2)*(self.pulse_props.p0*E0*p_times_A_vals_up +
-                                                         1*E0**2*A_square_vals_up)))))
-            ff2 = cp.flip(fft(self.pulse_props.tOutput*cp.exp(-1j*fs_in_au(self.pulse_props.tAxis)*
-                                                 (1/(2)*(self.pulse_props.p0*E0*p_times_A_vals_down +
-                                                         1*E0**2*A_square_vals_down)))))
-
-            spectrum1 = cp.square(cp.abs(ff1))
-            spectrum2 = cp.square(cp.abs(ff2))
-
-    #         ff1=ff1/(cp.sum(cp.square(cp.abs(ff1))))
-    #         ff1=ff2/(cp.sum(cp.square(cp.abs(ff2))))
-
-            return spectrum1, spectrum2
-
-    # @staticmethod
-    # @vectorize([float64(float64, boolean)])
-    # def get_ind_vals(new_y, start):
-    #     if not(start):
-    #         new_y += peak_max_y
-    #     idx = np.abs(tof_ens - new_y).argmin()
-    #     if start:
-    #         if tof_ens[idx] < new_y:
-    #             idx += 1
-    #     else:
-    #         if tof_ens[idx] > new_y+peak_max_y:
-    #             idx -= 1
-    #     return idx
-
-    # @staticmethod
-    # def discretized_spectrum(spectrum, num_points):
-    #     from numpy import interp
-    #     spectrum = cp.asnumpy(spectrum)
-    #     vals = Pulse.discrete_positions(spectrum, num_points)
-    #     st = Pulse.get_ind_vals(vals, True).astype("int")
-    #     en = Pulse.get_ind_vals(vals, False).astype("int")
-    #     new_spec = np.zeros(len(tof_ens))
-
-    #     orig_tof_no_off = orig_tof_ens[:10]-orig_tof_ens[0]
-    #     for start, end, valq in zip(st, en, vals):
-    #         intvals = tof_ens[start:end]
-    #         new_int = np.interp(intvals, orig_tof_no_off +
-    #                             valq, Pulse.single_discrete_spike())
-    #         new_spec[start:end] += new_int
-    #     new_spec = new_spec/sum(new_spec)
-    #     return new_spec
-
-    @staticmethod
-    def discretized_spectrum(spectrum, num_points):
-        # from numpy import interp
-        # spectrum = cp.asnumpy(spectrum)
-        # vals = Pulse.discrete_positions(spectrum, num_points)
-        # st = Pulse.get_ind_vals(vals, True).astype("int")
-        # en = Pulse.get_ind_vals(vals, False).astype("int")
-        # new_spec = np.zeros(len(tof_ens))
-
-        # orig_tof_no_off = orig_tof_ens[:10]-orig_tof_ens[0]
-        # for start, end, valq in zip(st, en, vals):
-        #     intvals = tof_ens[start:end]
-        #     new_int = np.interp(intvals, orig_tof_no_off +
-        #                         valq, Pulse.single_discrete_spike())
-        #     new_spec[start:end] += new_int
-        # new_spec = new_spec/sum(new_spec)
-        return spectrum
-
-
-#     def __discretized_spectrum(self,spectrum,num_points):
-#         ll=len(self.__single_discrete_spike())
-#         sval=self.__discrete_positions(spectrum,num_points)
-#         sval_ens=interp(cp.array(sval),cp.arange(len(tof_ens)),tof_ens_gpu)
-#         new_spec=cp.zeros(len(tof_ens))
-#         one_spike_int = lambda r : interp(tof_ens_gpu
-#                                           ,cp.asarray(orig_tof_ens[:ll]-orig_tof_ens[7])+r
-#                                           ,self.__single_discrete_spike())
-#         all_spikes=cp.array([one_spike_int(i) for i in sval_ens])
-#         new_spec= cp.sum(all_spikes,axis=0)
-
-#         return new_spec
-
-
-#     @staticmethod
-#     def single_discrete_spike():
-#         from numpy.random import rand
-#         from numpy import pad, floor, ceil
-# #         padval=(len(orig_tof_ens)-len(noisepeak))/2
-#         single_spike = 0.4*rand(10)+gauss_spike
-#     #     single_spike= pad(single_spike, (floor(padval).astype(int),
-#     #                                      ceil(padval).astype(int)), 'constant', constant_values=(0))
-#         return single_spike
-
-#     @staticmethod
-#     def discrete_positions(spectrum, num_points):
-#         from scipy.interpolate import interp1d
-#         from numpy import interp as npinterp
-#         from numpy.random import rand
-#         from numpy import cumsum
-#         from numpy import round as np_round
-#         spectrum = cp.asnumpy(spectrum)
-#         cumulative_spectrum = (np.cumsum(spectrum))/sum(spectrum)
-#         indices = np.arange(len(spectrum))
-#         discrete_positions = npinterp(
-#             rand(num_points), cumulative_spectrum, indices)
-# #         discrete_positions=mint(rand(num_points))
-#         discrete_positions = npinterp(
-#             discrete_positions, np.arange(len(tof_ens)), tof_ens)
-
-#     #     discrete_positions=np_round(discrete_positions)
-#         return discrete_positions
-
-#     two methods (training and validation) from distinct original measurements to introduce
-#     background noise into the spectra
-
-
-    # def __makenoise_train(self, maxv):
-    #     '''background noise used for training'''
-    #     from numpy.random import randint
-    #     from numpy import roll
-    #     hnoise = measurednoise_train*cp.asnumpy(maxv)
-    #     return roll(hnoise, np.random.randint(1, len(tof_ens)))[:len(tof_ens)]
-
-    # def __makenoise_val(self, maxv):
-    #     '''background noise used for validation'''
-    #     from numpy.random import randint
-    #     from numpy import roll
-    #     hnoise = measurednoise_val*cp.asnumpy(maxv)
-    #     return roll(hnoise, np.random.randint(1, len(tof_ens)))[:len(tof_ens)]
-
-    def get_spectra(self, streakspeed_in_meV_per_fs, keep_originals=False, discretized=True):
-        '''returns streaked spectra, measured with "number_electronsx" simulated electrons or nondiscretized as a tuple'''
-        from streaking_cal.statistics import weighted_avg_and_std
-
-        if not(self.is_low_res()):
-
-            (streaked1, streaked2) = self.__get_streaked_spectra(streakspeed_in_meV_per_fs)
-
-            streaked1 = interp(tof_ens_gpu, self.pulse_props.enAxis, streaked1)
-            streaked2 = interp(tof_ens_gpu, self.pulse_props.enAxis, streaked2)
-            xuvonly = interp(tof_ens_gpu, self.pulse_props.enAxis,
-                             cp.square(cp.abs(self.pulse_props.enOutput)))
-
-            if not(keep_originals):
-                self.pulse_props.enAxis = None
-                self.pulse_props.enOutput = None
-                t_square = cp.square(cp.abs(self.pulse_props.tOutput))
-                t_mean, _ = weighted_avg_and_std(
-                    self.pulse_props.tAxis.get(), t_square.get())
-                self.pulse_props.tOutput = interp(cp.asarray(
-                    standard_full_time), self.pulse_props.tAxis-t_mean, t_square).get()
-                self.pulse_props.tOutput = self.pulse_props.tOutput/cp.sum(self.pulse_props.tOutput)
-                self.pulse_props.tAxis = standard_full_time
-                self.__is_low_res = True
-                self.__streakedspectra = np.asarray(
-                    (xuvonly.get(), streaked1.get(), streaked2.get()))
-                self.__streakspeed = streakspeed_in_meV_per_fs
-                self.pulse_props.tAxis = standard_full_time
-
-            if discretized:
-                streaked1 = self.discretized_spectrum(
-                    streaked1, self.num_electrons1)
-                streaked2 = self.discretized_spectrum(
-                    streaked2, self.num_electrons2)
-
-            self.__streakspeed = streakspeed_in_meV_per_fs
-
-            return cp.asnumpy(xuvonly), cp.asnumpy(streaked1), cp.asnumpy(streaked2)
-
-        elif discretized:
-            (xuvonly, streaked1, streaked2) = self.__streakedspectra
-            streaked1 = self.discretized_spectrum(
-                streaked1, self.pulse_props.num_electrons0)
-            streaked2 = self.discretized_spectrum(
-                streaked2, self.pulse_props.num_electrons1)
-
-            return cp.asnumpy(xuvonly), cp.asnumpy(streaked1), cp.asnumpy(streaked2)
-
-        else:
-            return self.__streakedspectra.copy()
-
-    def get_augmented_spectra(self, streakspeed_in_meV_per_fs, for_training=False, discretized=True):
-        '''data augemtation to imitate: shift of XUV-energy, jitter between Streaking and XUV, background signal
-        values here are handcrafted for the (reduced) chosen resolution of self.__eAxis and might 
-        need be adjusted in the future
-        ;Returns augemented spectra as a matrix'''
-        from numpy.random import randint
-        from numpy import asarray, roll
-        from sklearn.preprocessing import Normalizer
-
-        aug_spectra = asarray(self.get_spectra(
-            streakspeed_in_meV_per_fs, discretized=discretized))
-
-#         to reduce dependancy from XUV-photon energy
-        # shiftall = randint(-20, 20)
-        shiftall = 0 # random wert ist ausgelagert
-#         to account for jitter
-        shiftstr = randint(-120, 120)
-
-        aug_spectra[0] = roll(aug_spectra[0], shiftall)
-        aug_spectra[1] = roll(aug_spectra[1], shiftall-shiftstr)
-        aug_spectra[2] = roll(aug_spectra[2], shiftall+shiftstr)
-
-#         add background signal from actual measurements
-#         if for_training:
-#             aug_spectra[1]=aug_spectra[1]+self.__makenoise_train(max(aug_spectra[1]))
-#             aug_spectra[2]=aug_spectra[2]+self.__makenoise_train(max(aug_spectra[2]))
-
-#         else:
-#             aug_spectra[1]=aug_spectra[1]+self.__makenoise_val(max(aug_spectra[1]))
-#             aug_spectra[2]=aug_spectra[2]+self.__makenoise_val(max(aug_spectra[2]))
-
-
-#         aug_spectra[1]=np.convolve(noisepeak,aug_spectra[1],mode="same")
-#         aug_spectra[2]=np.convolve(noisepeak,aug_spectra[2],mode="same")
-
-#             normalize to area 1
-        hnormalizer = Normalizer(norm="l1")
-        norm1 = hnormalizer.transform(aug_spectra)
-
-        return norm1
-
-
-    def to_Raw_Data(self,streakspeed_in_meV_per_fs):
-        raw_obj = Raw_Data2(self.get_augmented_spectra(streakspeed_in_meV_per_fs), tof_ens, self.get_temp(),
-                 num_electrons1=self.pulse_props.num_electrons0, num_electrons2=self.pulse_props.num_electrons1)
-        return raw_obj
-
-    def to_file(self, writepath):
-        if self.is_low_res():
-            raise self.Data_Nonexisting_Error(
-                'High resolution data is already deleted. Use to_file() before calculating streaked spectra or with get_spectra(keep_originals = True) ')
-        else:
-            self.get_temp().get().tofile(writepath)
-
-    def get_streakspeed(self):
-        return self.__streakspeed
-
-
-
-# %%
-
-
-class Datagenerator(Sequence):
-    def __init__(self, x_set, y_set, batch_size, X, for_train=True):
-        self.X=X
-        self.x, self.y = x_set, y_set
-#         self.pulses = pulses
-        self.batch_size = batch_size
-#         self.xdims = xdims
-#         self.ydims = ydims
-#         self.time=time
-        self.for_train = for_train
-
-    def __len__(self):
-        return int(np.ceil(len(self.x) / float(self.batch_size)))
-
-    def __getitem__(self, idx):
-        from tensorflow.keras.utils import Sequence
-        from scipy.ndimage import gaussian_filter
-        from numpy.random import uniform, randint
-        import numpy as np
-        from numpy import zeros
-
-        batch = self.x[idx * self.batch_size:(idx + 1) * self.batch_size]
-#         batch = self.y[idx * self.batch_size:(idx + 1) * self.batch_size]
-
-#         x = [X[i].get_raw_matrix() for i in batch]
-
-        x = []
-        for _,i in enumerate(batch):
-            # (xuv, str1, str2) = self.X[i].get_augmented_spectra(
-            #     0, discretized=False)
-            b1 = self.X[i].to_Raw_Data(0).to_Measurement_Data()
-
-            # Raw_Data2(np.asarray((xuv, str1, str2)), tof_ens, self.X[i].get_temp(
-            # ), num_electrons1=self.X[i].num_electrons1, num_electrons2=self.X[i].num_electrons2)
-
-
-            x.append(b1.spectra)
-#             x[ind]=b1.get_all_tof()
-#             y.append(b1.get_temp())
-
-
-#         x = [X[i].get_augmented_spectra(0,discretized=False) for i in batch]
-        x = np.asarray(x)
-
-        y = [self.X[i].get_temp() for i in batch]
-        y = np.asarray(y)
-
-        # .reshape(self.batch_size, -1)
-        return x.reshape(-1, 3, x[0].shape[1], 1), np.array(y)
-
-# %%
-
-
-class Measurement_Data():
-    tof_params = [-755.6928301474567, 187.2222222222222, -39.8]
-    vls_params = [1239.84, 0.0032, 11.41]
-    energy_axis = np.arange(50,110.1,0.2)
-    zeroindx = 674
-
-    ionization_potential = 21.55 #Neon 2p 
-    vls_pixels = np.arange(1024) + 1 # from Mathematica + indexcorrection
-    vls_energies = 1239.84/(vls_pixels*0.0032 + 11.41)  # VLS pix 2 nm calibration 
-    vls_energies -= ionization_potential
-
-    def __init__(self, vls_data, tof_data, tof_times):
-        self.vls_in_data = vls_data # measured data
-        self.vls_in_len = len(self.vls_in_data)
-
-        self.tof_in_data = tof_data
-        self.tof_in_times = tof_times
-
-        self.tof_eVs = self.tof_params[0]**2/(self.tof_in_times - self.tof_params[1])**2 + self.tof_params[2]
-
-        self.tof_energies = np.array(list(map(self.tof_to_eV,self.tof_in_times[self.zeroindx + 1:]*1e9)))  # OK
-
-        self.spectra = np.asarray([self.vls_pix_to_eVenergies(self.vls_in_data, self.energy_axis),
-                                   self.tof_to_eVenergies(self.tof_in_data[0], self.energy_axis),
-                                   self.tof_to_eVenergies(self.tof_in_data[1], self.energy_axis) ])
-
-
-
-    def vls_pix_to_eVenergies(self,vls,energies = None):
-        '''interpolation to calculate a spectrum from a VLS signal'''
-        if energies is None:
-            energies = self.energy_axis
-        spec =  np.interp(energies,self.vls_energies[::-1],vls[::-1],0,0)
-        return spec
-
-    def tof_to_eVenergies(self,tof,energies = None):
-        '''interpolation and intensity correction to calculate a spectrum from a TOF signal'''
-        if energies is None: 
-            energies = self.energy_axis
-
-        spec = -self.correctints(tof)
-        spec = np.interp(energies,self.tof_energies[::-1],spec[::-1],0,0)
-        return spec
-
-    def correctints(self,spec):
-        '''from TOF times to eV'''
-        return 0.5 * self.tof_params[0] * spec[self.zeroindx + 1:]/(self.tof_energies + self.tof_params[2])**1.5
-
-    def tof_to_eV(self,t):
-
-        return self.tof_params[0]**2/(t - self.tof_params[1])**2 - self.tof_params[2]
-
-# %%
-# %%
-# o = Measurement_Data([13.4,234,25,23,2,5],[41,2,14,6,2])
-# # %%
-# o.get_eV_vls()
-# o.vls_eVs
-# # %%
-# len(np.arange(60,90.1,0.1))
-# # %%
-
 class Raw_Data2():
     
     # parameters from TOF calibration
@@ -830,9 +95,9 @@ class Raw_Data2():
 
     vls_pixels = np.arange(1024)  # pixels of spectrometer
 
-    def __init__(self, spectra, energies, temp_profile, num_electrons1=25, num_electrons2=25):
-        self.num_electrons1 = num_electrons1
-        self.num_electrons2 = num_electrons2
+    def __init__(self, spectra, energies, temp_profile, num_electrons0=25, num_electrons1=25):
+        self.num_electrons1 = num_electrons0
+        self.num_electrons2 = num_electrons1
         self.energy_axis = energies
         # self.TOF_times = self.energies_to_TOF_times(energies)
         self.temp_profile = temp_profile
@@ -1154,3 +419,677 @@ class Raw_Data2():
 
 
         return measurement_obj
+
+# %%
+class Raw_Data():
+    from numpy import asarray, linspace, arange, full, cumsum
+    
+    # parameters from TOF calibration
+    TOF_params = asarray([-755.6928301474567, 187.2222222222, -39.8])
+    TOF_response = np.fromfile("./resources/TOF_response.dat", dtype="float64")
+    TOF_response = TOF_response/np.sum(TOF_response)
+
+    TOF_times = (cumsum(full(2500,1.))-1)/3.6e9 
+    TOF_times = TOF_times[675:]
+    # linspace(0, 506+2/3, 1825)  # TOF times raw data
+    
+
+    vls_pixels = arange(1024)  # pixels of spectrometer
+
+    def __init__(self, spectra, energies, temp_profile, num_electrons1=25, num_electrons2=25):
+        self.num_electrons1 = num_electrons1
+        self.num_electrons2 = num_electrons2
+        self.energy_axis = energies
+        self.TOF_times = self.energies_to_TOF_times(energies)
+        self.temp_profile = temp_profile
+        self.spectra = spectra
+        self.TOF_response = self.get_random_response_curve()
+
+        self.calc_vls_spectrum()
+
+        self.num_TOF_noise0=np.int(0+np.random.rand()*3) # num of stray electrons in spectra
+        self.num_TOF_noise1=np.int(0+np.random.rand()*3)
+
+    def get_random_response_curve(self):
+        response=np.abs(Raw_Data.TOF_response-0.015+0.03*np.random.rand(58))
+
+        # resp_length=30;
+        # tstd=2+9*np.random.rand();
+        # noiselevel= 0.4*np.random.rand();
+        # response=scipy.signal.gaussian(resp_length, std=tstd)
+        # response=np.roll(response,np.random.randint(-(resp_length // 2)+tstd,(resp_length // 2)-tstd))
+        # response+=np.abs(noiselevel*np.random.randn(resp_length))
+
+        response= response/np.sum(response)
+        return response
+
+    def calc_tof_traces(self):
+        from numpy import argsort, take_along_axis, asarray
+
+        self.TOF_times_sort_order = argsort(self.TOF_times, axis=0)
+        self.sorted_TOF_times = take_along_axis(
+            self.TOF_times, self.TOF_times_sort_order, axis=0)
+
+        TOF_traces = asarray(
+            list(map(self.TOF_signal_correction, self.spectra[1:])))
+        TOF_traces = asarray(list(map(self.resampled_TOF_signal, TOF_traces)))
+        TOF_traces[0] = self.discretized_spectrum(
+            TOF_traces[0], self.num_electrons1)
+        # TOF_traces[0] = TOF_traces[0]/np.sum(TOF_traces[0])
+
+        TOF_traces[1] = self.discretized_spectrum(
+            TOF_traces[1], self.num_electrons2)
+   
+        return TOF_traces
+
+    def calc_vls_spectrum(self):
+        from numpy import argsort, take_along_axis
+
+        self.VLS_signal = self.spectra[0]
+
+        self.vls_pixels = self.energies_to_VLS_pixel(self.energy_axis)
+        self.VLS_pixels_sort_order = argsort(self.vls_pixels, axis=0)
+        self.sorted_VLS_pixels = take_along_axis(
+            self.vls_pixels, self.VLS_pixels_sort_order, axis=0)
+
+        self.VLS_signal = self.resampled_VLS_signal(self.VLS_signal)
+        self.VLS_signal = self.VLS_signal/np.sum(self.VLS_signal)
+
+        self.vls_pixels = Raw_Data.vls_pixels
+
+    def vls_finite_resolution(self,spectrum):
+        from scipy import signal
+        spectrum = np.convolve(spectrum,signal.gaussian(21, std=2),'same') # TODO is this (21+-2) correct?
+        return spectrum
+
+    def augment_vls(self):
+        from numpy import roll
+
+        aug_vls = self.vls_finite_resolution(self.VLS_signal)
+        aug_vls = self.add_tof_noise_hf(aug_vls,0.00009,0.00013) # real measured noise = 0.00011
+        aug_vls = aug_vls/np.sum(aug_vls)
+
+        return aug_vls
+
+    def augment_tof(self):
+
+        aug_tof0, aug_tof1 = self.calc_tof_traces()
+
+        aug_tof0 = self.add_tof_noise(aug_tof0,self.num_TOF_noise0)       
+        aug_tof0 = np.convolve(aug_tof0, self.TOF_response, mode="same")
+        aug_tof0 = np.roll(aug_tof0,-20) # convolution shift to the right
+        aug_tof0 = aug_tof0/np.sum(aug_tof0)
+        aug_tof0 =  self.add_tof_noise_hf(aug_tof0)
+        aug_tof0 = aug_tof0/np.sum(aug_tof0)
+
+
+
+        aug_tof1 = self.add_tof_noise(aug_tof1,self.num_TOF_noise1)
+        aug_tof1 = np.convolve(aug_tof1, self.TOF_response, mode="same")
+        aug_tof1 = np.roll(aug_tof1,-20) # convolution shift to the right
+        aug_tof1 = aug_tof1/np.sum(aug_tof1)
+        aug_tof1 =  self.add_tof_noise_hf(aug_tof1)
+        aug_tof1 = aug_tof1/np.sum(aug_tof1)
+
+
+        return aug_tof0, aug_tof1
+
+    def get_raw_matrix(self):
+        from numpy import roll, pad
+        from numpy import sum as npsum
+
+        vls_new = self.augment_vls()
+        tof_new0, tof_new1 = self.augment_tof()
+
+        vls_new = pad(vls_new, pad_width=(0, len(tof_new0)-len(self.VLS_signal)))
+
+
+        r = 150
+        tof_new0 = roll(tof_new0, r) # roll, so that TOF and VLS are closer together
+        tof_new1 = roll(tof_new1, r)
+
+
+        return np.asarray([vls_new, tof_new0, tof_new1])
+
+    def add_tof_noise(self,spectrum,num_noise_peaks):
+        positions=np.random.randint(len(spectrum),size=num_noise_peaks)
+        withspikes=spectrum+self.added_spikes(positions, len(spectrum))
+
+        return withspikes
+
+    def add_tof_noise_hf(self,spectrum, lower=0.00007, upper = 0.00014):
+        """Add white noise to spectra, similar to real measurements"""
+        # 0.00007 to 0.00014 from actual measured TOF spectra
+        with_noise = np.abs(spectrum + np.random.uniform(lower,upper,1).item()*np.random.randn(len(spectrum)))
+
+        return with_noise
+
+
+
+    def get_all_tof(self):
+        """if every signal was measured over time-of-flight
+        currently not used"""
+        tof_matrix = self.get_raw_matrix()
+        VLS = self.VLS_signal_to_energies()
+        VLS = self.TOF_signal_correction(VLS)
+        VLS = self.resampled_TOF_signal(VLS)
+
+        tof_matrix[0] = VLS
+
+        return tof_matrix
+
+    def energies_to_TOF_times(self, energies_eV):  # in ns
+        from numpy import sqrt
+        TOF_times = self.TOF_params[1]+ self.TOF_params[0]**2/sqrt((self.TOF_params[0]**2)*(
+            energies_eV - self.TOF_params[2]))  # funktioniert
+        return TOF_times  # -min(TOF_times)
+
+    def VLS_pixel_to_energies(self, vls_pixel):
+        return -21.5 + 1239.84/(11.41 + 0.0032*vls_pixel)
+
+    def energies_to_VLS_pixel(self, energies_eV):
+        # calibration and 21.5 eV ionization
+        return -3565.63 + 387450/(21.5 + energies_eV)
+
+    def VLS_signal_to_energies(self):
+        VLS_energies = self.VLS_pixel_to_energies(self.vls_pixels)
+        sort_order = np.argsort(VLS_energies, axis=0)
+        VLS_energies = np.take_along_axis(VLS_energies, sort_order, axis=0)
+        VLS_ordered = np.take_along_axis(self.VLS_signal, sort_order, axis=0)
+        VLS_resampled = np.roll(
+            np.interp(self.energy_axis, VLS_energies, VLS_ordered, left=0, right=0), -50)
+        # TODO wieso roll -50??
+
+        return VLS_resampled
+
+    # when calulating TOF_traces from energy spectra
+    def TOF_signal_correction(self, signal):
+        adjusted_signal = -4 * \
+            (signal*(self.energy_axis +
+                     self.TOF_params[2])**1.5)/self.TOF_params[0]
+        return adjusted_signal
+
+    def resampled_VLS_signal(self, VLS_signal):
+        from numpy import take_along_axis, interp
+
+        sorted_VLS_signal = take_along_axis(
+            VLS_signal, self.VLS_pixels_sort_order, axis=0)
+        resampled_VLS_signal = interp(
+            Raw_Data.vls_pixels, self.sorted_VLS_pixels, sorted_VLS_signal)
+
+        return resampled_VLS_signal
+
+    def resampled_TOF_signal(self, TOF_signal):
+        from numpy import take_along_axis, interp
+
+        sorted_TOF_signal = take_along_axis(
+            TOF_signal, self.TOF_times_sort_order, axis=0)
+        resampled_TOF_signal = interp(
+            1e9*Raw_Data.TOF_times, self.sorted_TOF_times, sorted_TOF_signal)
+
+        return resampled_TOF_signal
+
+    def discretized_spectrum(self, spectrum, num_points):
+        from numpy import interp, zeros
+#         disc_spec=np.zeros(len(spectrum))
+        positions = self.discrete_positions(spectrum, num_points)
+
+
+#         for i in positions:
+#             valll=np.random.rand()+1
+#             (divval,modval)=divmod(i, 1)
+#             divval=divval.astype("int")
+#             disc_spec[divval]+=valll*(1-modval)
+#             disc_spec[divval+1]+=valll*(modval)
+
+        disc_spec = self.added_spikes(positions, len(spectrum))
+
+        return disc_spec
+
+    @staticmethod
+    @njit(fastmath=True)
+    def added_spikes(positions, arr_length):
+        '''simple linear interpolation and summation'''
+        disc_spec = np.zeros(arr_length)
+        for i in positions:
+            valll = 8*np.random.rand()+0.5 # which heights are suitable? propably between 0.5 and 8.5
+            (divval, modval) = np.divmod(i, 1)
+            divval = np.int(divval)
+            disc_spec[divval] += valll*(1-modval)
+            disc_spec[divval+1] += valll*(modval)
+
+        return disc_spec
+
+    @staticmethod
+    @njit(fastmath=True)
+    def discrete_positions(spectrum, num_points):
+        cumulative_spectrum = (np.cumsum(spectrum))/np.sum(spectrum)
+        indices = np.arange(len(spectrum))
+        discrete_positions = np.interp(np.random.rand(num_points), cumulative_spectrum, indices)
+
+        return discrete_positions
+
+    def get_temp(self):
+        return self.temp_profile
+    
+    def to_Measurement_Data(self):
+        measurement_obj = Measurement_Data(self.augment_vls(), self.augment_tof(),Raw_Data.TOF_times)
+
+        return measurement_obj
+
+
+# %%
+
+class StreakedData(object):
+    @staticmethod
+    def fs_in_au(t): return 41.3414*t  # from fs to a.u.
+    @staticmethod
+    def eV_in_au(e): return 0.271106*np.sqrt(e)  # from eV to a.u.
+    h = 4.135667662  # in eV*fs
+
+    class Data_Nonexisting_Error(Exception):
+        def __init__(self, message):
+            self.message = message
+#
+
+    def __init__(self, pulse_props, pulse_data, streakspeed: float):
+
+        from streaking_cal.statistics import weighted_avg_and_std
+
+        # centralE, dE = weighted_avg_and_std(
+        #     EnAxis.get(), cp.square(cp.abs(EnOutput)).get())
+
+        self.pulse_props = pulse_props
+
+
+        
+        self.__is_low_res = False
+        self.__streakspeed = streakspeed
+        
+        self._get_streaked_spectra(pulse_data = pulse_data, streak_speed = streakspeed) # calculate streaked spectra
+
+
+#     @property for read access only members
+#     @classmethod
+#     def from_GS(cls, pulse_props: PulseProperties):
+#         from streaking_cal.GetSASE import GetSASE_gpu as GS
+# #         from streaking_cal.statistics import weighted_avg_and_std
+
+#         (EnAxis, EnOutput, TAxis, TOutput) = GS(CentralEnergy=pulse_props.centralE,
+#                                                 dE_FWHM=2.355*pulse_props.dE*2**0.5,
+#                                                 dt_FWHM=2.355*pulse_props.dT*2**0.5,
+#                                                 onlyT=False)
+#         EnAxis = EnAxis.astype("float32")
+#         TAxis = TAxis.astype("float32")
+#         EnOutput = EnOutput.astype("complex64")
+#         TOutput = TOutput.astype("complex64")
+
+#         return cls(EnAxis, EnOutput, TAxis, TOutput, pulse_props)
+
+    # @classmethod
+    # def from_file(cls, path_temp, num_electrons1=25, num_electrons2=25):
+    #     TOutput = cp.fromfile(path_temp, dtype="complex64")
+    #     TAxis = cp.fromfile("./GS_Pulses/axis/time_axis.dat", dtype="float32")
+
+    #     EnOutput = cp.fft.ifft(TOutput)
+    #     EnAxis = cp.linspace(0, 140, 32*1024)
+
+    #     return cls(EnAxis, EnOutput, TAxis, TOutput, num_electrons1, num_electrons2)
+
+#     certain entries may be deleted after calculation of measured spectra
+    def get_temp(self):
+        return self.pulse_props.tOutput
+
+    def get_tAxis(self):
+        return self.pulse_props.tAxis
+
+    def get_spec(self):
+        if self.__is_low_res:
+            return None
+        else:
+            return self.pulse_props.enOutput
+
+    def get_eAxis(self):
+        if self.__is_low_res:
+            return None
+        else:
+            return self.pulse_props.enAxis
+
+    def is_low_res(self):
+        return self.__is_low_res
+
+    def _get_streaked_spectra(self, pulse_data, streak_speed: float) -> None:
+        if self.is_low_res == True:
+            return None
+        else:
+            from cupy.fft import fft
+
+            def fs_in_au(t): return 41.3414*t  # from fs to a.u.
+            # def eV_in_au(e): return 0.271106*np.sqrt(e)  # from eV to a.u.
+
+            # in V/m; shape of Vectorpotential determines: 232000 V/m = 1 meV/fs max streakspeed
+            E0 = 232000*streak_speed
+            ff1 = cp.flip(fft(pulse_data.tOutput*cp.exp(-1j*fs_in_au(pulse_data.tAxis)*
+                                                 (1/(2)*(self.pulse_props.p0*E0*p_times_A_vals_up +
+                                                         1*E0**2*A_square_vals_up)))))
+            ff2 = cp.flip(fft(pulse_data.tOutput*cp.exp(-1j*fs_in_au(pulse_data.tAxis)*
+                                                 (1/(2)*(self.pulse_props.p0*E0*p_times_A_vals_down +
+                                                         1*E0**2*A_square_vals_down)))))
+
+            streaked0 = cp.square(cp.abs(ff1))
+            streaked1 = cp.square(cp.abs(ff2))
+
+
+            streaked0 = interp(tof_ens_gpu, pulse_data.enAxis, streaked0)
+            streaked1 = interp(tof_ens_gpu, pulse_data.enAxis, streaked1)
+            xuvonly = interp(tof_ens_gpu, pulse_data.enAxis,
+                             cp.square(cp.abs(pulse_data.enOutput)))
+            
+            
+            self._streakedspectra = np.asarray([cp.asnumpy(xuvonly),                                                                     
+                                                cp.asnumpy(streaked0), 
+                                                cp.asnumpy(streaked1)])
+            
+
+
+
+    def get_spectra(self):
+        '''returns streaked spectra as a numpy array'''
+        # from streaking_cal.statistics import weighted_avg_and_std
+
+        # if not(self.is_low_res()):
+
+        #     (xuvonly, streaked1, streaked2) = self._get_streaked_spectra(streakspeed_in_meV_per_fs)
+
+        #     streaked1 = interp(tof_ens_gpu, self.pulse_props.enAxis, streaked1)
+        #     streaked2 = interp(tof_ens_gpu, self.pulse_props.enAxis, streaked2)
+        #     xuvonly = interp(tof_ens_gpu, self.pulse_props.enAxis,
+        #                      cp.square(cp.abs(self.pulse_props.enOutput)))
+
+        #     if not(keep_originals):
+        #         self.pulse_props.enAxis = None
+        #         self.pulse_props.enOutput = None
+        #         t_square = cp.square(cp.abs(self.pulse_props.tOutput))
+        #         t_mean, _ = weighted_avg_and_std(
+        #             self.pulse_props.tAxis.get(), t_square.get())
+        #         self.pulse_props.tOutput = interp(cp.asarray(
+        #             standard_full_time), self.pulse_props.tAxis-t_mean, t_square).get()
+        #         self.pulse_props.tOutput = self.pulse_props.tOutput/cp.sum(self.pulse_props.tOutput)
+        #         self.pulse_props.tAxis = standard_full_time
+        #         self.__is_low_res = True
+        #         self.__streakedspectra = np.asarray(
+        #             (xuvonly.get(), streaked1.get(), streaked2.get()))
+        #         self.__streakspeed = streakspeed_in_meV_per_fs
+        #         self.pulse_props.tAxis = standard_full_time
+
+        #     if discretized:
+        #         streaked1 = self.discretized_spectrum(
+        #             streaked1, self.num_electrons1)
+        #         streaked2 = self.discretized_spectrum(
+        #             streaked2, self.num_electrons2)
+
+        #     self.__streakspeed = streakspeed_in_meV_per_fs
+        
+
+        #     return cp.asnumpy(self.xuvonly), cp.asnumpy(self.streaked1), cp.asnumpy(self.streaked2)
+
+        # elif discretized:
+        #     (xuvonly, streaked1, streaked2) = self.__streakedspectra
+        #     streaked1 = self.discretized_spectrum(
+        #         streaked1, self.pulse_props.num_electrons0)
+        #     streaked2 = self.discretized_spectrum(
+        #         streaked2, self.pulse_props.num_electrons1)
+
+        #     return cp.asnumpy(xuvonly), cp.asnumpy(streaked1), cp.asnumpy(streaked2)
+
+        
+        return self._streakedspectra.copy()
+
+    def get_augmented_spectra(self):
+        '''Data augemtation to imitate: jitter between Streaking-Pulse and XUV-Pulse.
+        Returns augemented spectra as a matrix.'''
+        from numpy.random import randint
+        from numpy import asarray, roll
+        from sklearn.preprocessing import Normalizer
+
+        aug_spectra = asarray(self.get_spectra())
+
+#         to reduce dependancy from XUV-photon energy
+        # shiftall = randint(-20, 20)
+        shiftall = 0 # random wert ist ausgelagert
+#         to account for jitter
+        shiftstr = randint(-120, 120)
+
+        aug_spectra[0] = roll(aug_spectra[0], shiftall)
+        aug_spectra[1] = roll(aug_spectra[1], shiftall-shiftstr)
+        aug_spectra[2] = roll(aug_spectra[2], shiftall+shiftstr)
+
+#         add background signal from actual measurements
+#         if for_training:
+#             aug_spectra[1]=aug_spectra[1]+self.__makenoise_train(max(aug_spectra[1]))
+#             aug_spectra[2]=aug_spectra[2]+self.__makenoise_train(max(aug_spectra[2]))
+
+#         else:
+#             aug_spectra[1]=aug_spectra[1]+self.__makenoise_val(max(aug_spectra[1]))
+#             aug_spectra[2]=aug_spectra[2]+self.__makenoise_val(max(aug_spectra[2]))
+
+
+#         aug_spectra[1]=np.convolve(noisepeak,aug_spectra[1],mode="same")
+#         aug_spectra[2]=np.convolve(noisepeak,aug_spectra[2],mode="same")
+
+
+        hnormalizer = Normalizer(norm="l1") # normalize area of all spectra to 1
+        norm1 = hnormalizer.transform(aug_spectra) 
+
+        return norm1
+
+
+    def to_Raw_Data(self) -> Raw_Data2:
+        raw_obj = Raw_Data2(self.get_augmented_spectra(), tof_ens, self.get_temp(),
+                 num_electrons0=self.pulse_props.num_electrons0, num_electrons1=self.pulse_props.num_electrons1)
+        return raw_obj
+
+    def to_file(self, writepath):
+        if self.is_low_res():
+            raise self.Data_Nonexisting_Error(
+                'High resolution data is already deleted. Use to_file() before calculating streaked spectra or with get_spectra(keep_originals = True) ')
+        else:
+            self.get_temp().get().tofile(writepath)
+
+    def get_streakspeed(self):
+        return self.__streakspeed
+
+# %%
+@dataclass
+class PulseData:
+    enAxis: cp.ndarray
+    enOutput: cp.ndarray 
+    tAxis: cp.ndarray
+    tOutput: cp.ndarray
+
+
+class PulseProperties:
+    
+    def __init__(self, fwhm_t: float, 
+                 fwhm_E: float, 
+                 num_electrons0: int, 
+                 num_electrons1: int, 
+                 centralE: float):
+        # from streaking_cal.GetSASE import GetSASE_gpu as GS # TODO noGPU solution missing
+
+        self.dE = fwhm_E/2.355 
+        self.dT = fwhm_t/2.355
+        self.fwhm_t = fwhm_t
+        self.fwhm_E = fwhm_E
+        self.num_electrons0 = num_electrons0
+        self.num_electrons1 = num_electrons1
+        self.centralE = centralE
+        self.p0 = PulseProperties.eV_in_au(centralE)
+
+
+        # (EnAxis, EnOutput, TAxis, TOutput) = GS(CentralEnergy=self.centralE,
+        #                                         dE_FWHM=self.fwhm_E*2**0.5,
+        #                                         dt_FWHM=self.fwhm_t*2**0.5,
+        #                                         onlyT=False)
+
+        # self.enAxis = EnAxis.astype("float32")
+        # self.tAxis = TAxis.astype("float32")
+        # self.enOutput = EnOutput.astype("complex64")
+        # self.tOutput = TOutput.astype("complex64")
+
+
+    @staticmethod
+    def fs_in_au(t): return 41.3414*t  # from fs to a.u.
+
+    @staticmethod
+    def eV_in_au(e): return 0.271106*np.sqrt(e)  # from eV to a.u.
+    
+    
+    def to_StreakedData_from_GetSASE(self, streakspeed : float) -> StreakedData:
+        from streaking_cal.GetSASE import GetSASE_gpu as GS
+        from streaking_cal.statistics import weighted_avg_and_std
+
+        
+        (enAxis, enOutput, tAxis, tOutput) = GS(CentralEnergy=self.centralE,
+                                                dE_FWHM=2.355*self.dE*2**0.5,
+                                                dt_FWHM=2.355*self.dT*2**0.5,
+                                                onlyT=False)
+        pulseData = PulseData(enAxis= enAxis, 
+                              enOutput= enOutput, 
+                              tAxis= tAxis,
+                              tOutput= tOutput)
+        
+        
+        # saving temporal profile in pulse_props as reference for training
+        t_square = cp.square(cp.abs(pulseData.tOutput))
+        t_mean, _ = weighted_avg_and_std(pulseData.tAxis.get(), t_square.get())
+        
+        self.tOutput = cp.interp(cp.asarray(standard_full_time), 
+                                          pulseData.tAxis-t_mean, 
+                                          t_square).get()
+        self.tOutput = self.tOutput/cp.sum(self.tOutput)
+        self.tAxis = standard_full_time
+
+        return StreakedData(self, pulseData, streakspeed)
+    
+    
+
+
+# %%
+
+
+class Datagenerator(Sequence):
+    def __init__(self, x_set, y_set, batch_size, X, for_train=True):
+        self.X=X
+        self.x, self.y = x_set, y_set
+#         self.pulses = pulses
+        self.batch_size = batch_size
+#         self.xdims = xdims
+#         self.ydims = ydims
+#         self.time=time
+        self.for_train = for_train
+
+    def __len__(self):
+        return int(np.ceil(len(self.x) / float(self.batch_size)))
+
+    def __getitem__(self, idx):
+        from tensorflow.keras.utils import Sequence
+        from scipy.ndimage import gaussian_filter
+        from numpy.random import uniform, randint
+        import numpy as np
+        from numpy import zeros
+
+        batch = self.x[idx * self.batch_size:(idx + 1) * self.batch_size]
+#         batch = self.y[idx * self.batch_size:(idx + 1) * self.batch_size]
+
+#         x = [X[i].get_raw_matrix() for i in batch]
+
+        x = []
+        for _,i in enumerate(batch):
+            # (xuv, str1, str2) = self.X[i].get_augmented_spectra(
+            #     0, discretized=False)
+            b1 = self.X[i].to_Raw_Data().to_Measurement_Data()
+
+            # Raw_Data2(np.asarray((xuv, str1, str2)), tof_ens, self.X[i].get_temp(
+            # ), num_electrons1=self.X[i].num_electrons1, num_electrons2=self.X[i].num_electrons2)
+
+
+            x.append(b1.spectra)
+#             x[ind]=b1.get_all_tof()
+#             y.append(b1.get_temp())
+
+
+#         x = [X[i].get_augmented_spectra(0,discretized=False) for i in batch]
+        x = np.asarray(x)
+
+        y = [self.X[i].get_temp() for i in batch]
+        y = np.asarray(y)
+
+        # .reshape(self.batch_size, -1)
+        return x.reshape(-1, 3, x[0].shape[1], 1), np.array(y)
+
+# %%
+
+
+class Measurement_Data():
+    tof_params = [-755.6928301474567, 187.2222222222222, -39.8]
+    vls_params = [1239.84, 0.0032, 11.41]
+    energy_axis = np.arange(45,110.1,0.2)
+    zeroindx = 674
+
+    ionization_potential = 21.55 #Neon 2p 
+    vls_pixels = np.arange(1024) + 1 # from Mathematica + indexcorrection
+    vls_energies = 1239.84/(vls_pixels*0.0032 + 11.41)  # VLS pix 2 nm calibration 
+    vls_energies -= ionization_potential
+
+    def __init__(self, vls_data, tof_data, tof_times):
+        self.vls_in_data = vls_data # measured data
+        self.vls_in_len = len(self.vls_in_data)
+
+        self.tof_in_data = tof_data
+        self.tof_in_times = tof_times
+
+        self.tof_eVs = self.tof_params[0]**2/(self.tof_in_times - self.tof_params[1])**2 + self.tof_params[2]
+
+        self.tof_energies = np.array(list(map(self.tof_to_eV,self.tof_in_times[self.zeroindx + 1:]*1e9)))  # OK
+
+        self.spectra = np.asarray([self.vls_pix_to_eVenergies(self.vls_in_data, self.energy_axis),
+                                   self.tof_to_eVenergies(self.tof_in_data[0], self.energy_axis),
+                                   self.tof_to_eVenergies(self.tof_in_data[1], self.energy_axis) ])
+
+
+
+    def vls_pix_to_eVenergies(self,vls,energies = None):
+        '''interpolation to calculate a spectrum from a VLS signal'''
+        if energies is None:
+            energies = self.energy_axis
+        spec =  np.interp(energies,self.vls_energies[::-1],vls[::-1],0,0)
+        return spec
+
+    def tof_to_eVenergies(self,tof,energies = None):
+        '''interpolation and intensity correction to calculate a spectrum from a TOF signal'''
+        if energies is None: 
+            energies = self.energy_axis
+
+        spec = -self.correctints(tof)
+        spec = np.interp(energies,self.tof_energies[::-1],spec[::-1],0,0)
+        return spec
+
+    def correctints(self,spec):
+        '''from TOF times to eV'''
+        return 0.5 * self.tof_params[0] * spec[self.zeroindx + 1:]/(self.tof_energies + self.tof_params[2])**1.5
+
+    def tof_to_eV(self,t):
+
+        return self.tof_params[0]**2/(t - self.tof_params[1])**2 - self.tof_params[2]
+
+# %%
+# %%
+# o = Measurement_Data([13.4,234,25,23,2,5],[41,2,14,6,2])
+# # %%
+# o.get_eV_vls()
+# o.vls_eVs
+# # %%
+# len(np.arange(60,90.1,0.1))
+# # %%
+
