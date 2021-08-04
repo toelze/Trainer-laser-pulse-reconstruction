@@ -67,7 +67,10 @@ mempool = cp.get_default_memory_pool()
 
 # from scipy.signal import find_peaks,peak_widths
 # from scipy.ndimage import gaussian_filter
-from source.class_collection import Datagenerator, StreakedData, Raw_Data2, PulseProperties
+from source.class_collection import (Datagenerator, 
+                                     StreakedData, 
+                                     PulseProperties,
+                                     EmployPhysicalProcess)
 
 # def ws_reg(kernel):
 #     if kernel.shape[0] > 0:
@@ -165,7 +168,7 @@ from source.class_collection import Datagenerator, StreakedData, Raw_Data, Measu
 # pbar = ProgressBar()
 from tqdm import tqdm as pbar
 
-num_pulses = 100000
+num_pulses = 10000
 streakspeed = 95  # meV/fs
 X = [""]*num_pulses
 y = [""]*num_pulses
@@ -177,10 +180,14 @@ for i in pbar(range(num_pulses),colour = 'red', ncols= 100):
                                  num_electrons1 = np.random.randint(15, 40), 
                                  centralE = np.random.uniform(65,75))
 
-    x1 = pulse_props.to_StreakedData_from_GetSASE(streakspeed = streakspeed)
+    x1 = EmployPhysicalProcess.Streaking(95,pulse_props)
+
     # x1.get_spectra(streakspeed, discretized=False)
     X[i] = x1
     
+
+# %%
+
 # %%
 pp = X[25]
 dd = pp.to_Raw_Data().to_Measurement_Data()
@@ -314,6 +321,8 @@ from tensorflow.keras.layers import (AveragePooling2D, BatchNormalization,
 # merged_model = tf.keras.models.load_model('./models/RAW_mat_mergedm')
 # encoder = tf.keras.models.load_model('./models/RAW_mat_encoder')
 # decoder = tf.keras.models.load_model('./models/RAW_mat_decoder')
+# %%
+
 
 
 # %%
