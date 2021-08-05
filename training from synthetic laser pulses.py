@@ -1,17 +1,18 @@
 # %%
 
-# TODO: warum 326 statt 301 energien
+
+# TODO RawData refactorn
+# TODO: strshift auf letzte Klasse verlagern
 # TODO: wie können die wichtigsten Daten elegant mit geliefert werden beim Erzeugen eines neuen Objekt?
 # TODO: welche Daten sind bei jeder Instanz gleich / unterschiedlich?
 # TODO: composition: Klassen halten Daten für Pulsparameter, für statische/ variable Messumgebung,
-# TODO Raw_Data2 zu Raw_Data wandeln (Raw_Data dabei löschen?)
 # TODO neuronales Netz anpassen
 
 # TODO: grafiken erzeugen : Genauigkeit über time-bandwidth-product
 # TODO:                     Genauigkeit über num_electrons
 
 
-import datetime
+# import datetime
 import os
 
 import cupy as cp
@@ -20,15 +21,15 @@ from numba.cuda import test
 # from streaking_cal.misc import interp
 import numpy as np
 import pandas as pd
-import scipy as sp
+# import scipy as sp
 import tensorflow as tf
 # from streaking_cal.misc import interp
-from cupy import interp
-from numba import boolean, float64, njit, vectorize
-from numpy.random import rand, randint
-from progressbar import ProgressBar
-from scipy.interpolate import interp1d
-from scipy.signal import gaussian
+# from cupy import interp
+# from numba import boolean, float64, njit, vectorize
+# from numpy.random import rand, randint
+# from progressbar import ProgressBar
+# from scipy.interpolate import interp1d
+# from scipy.signal import gaussian
 from sklearn.model_selection import train_test_split
 from tensorflow.keras import Input
 from tensorflow.keras.layers import (AveragePooling2D, BatchNormalization,
@@ -37,7 +38,7 @@ from tensorflow.keras.layers import (AveragePooling2D, BatchNormalization,
                                      Subtract)
 from tensorflow.keras.optimizers import Adam
 # from tensorflow_addons.layers import WeightNormalization
-from tensorflow.keras.regularizers import l1_l2
+# from tensorflow.keras.regularizers import l1_l2
 
 from streaking_cal.statistics import weighted_avg_and_std
 
@@ -69,8 +70,8 @@ mempool = cp.get_default_memory_pool()
 # from scipy.ndimage import gaussian_filter
 from source.class_collection import (Datagenerator, 
                                      StreakedData, 
-                                     PulseProperties,
-                                     EmployPhysicalProcess)
+                                     PulseProperties)
+from source.process_stages import streaking
 
 # def ws_reg(kernel):
 #     if kernel.shape[0] > 0:
@@ -154,13 +155,6 @@ print("Num GPUs Available: ", len(
 print(tf.version.VERSION)
 
 # %%
-from source.class_collection import Datagenerator, StreakedData, Raw_Data, Measurement_Data
-
-
-
-# %%
-# vlspix = np.arange(1024) + 1 # from Mathematica + indexcorrection
-# VLSens = 1239.84/((vlspix)*0.0032 + 11.41) - 21.55 
 
 
 # %%
@@ -168,7 +162,7 @@ from source.class_collection import Datagenerator, StreakedData, Raw_Data, Measu
 # pbar = ProgressBar()
 from tqdm import tqdm as pbar
 
-num_pulses = 10000
+num_pulses = 100000
 streakspeed = 95  # meV/fs
 X = [""]*num_pulses
 y = [""]*num_pulses
@@ -180,66 +174,28 @@ for i in pbar(range(num_pulses),colour = 'red', ncols= 100):
                                  num_electrons1 = np.random.randint(15, 40), 
                                  centralE = np.random.uniform(65,75))
 
-    x1 = EmployPhysicalProcess.Streaking(95,pulse_props)
+    x1 = streaking(95,pulse_props)
 
     # x1.get_spectra(streakspeed, discretized=False)
     X[i] = x1
-    
 
 # %%
 
-# %%
-pp = X[25]
-dd = pp.to_Raw_Data().to_Measurement_Data()
-ff = dd.spectra
+wholeset = np.arange(len(X))
 
-
-plt.plot(pp.pulse_props.tAxis,pp.pulse_props.tOutput)
-plt.figure()
-plt.plot(dd.energy_axis,ff[1])
-plt.plot(dd.energy_axis,ff[2])
-# %%
-t= X[0].to_Raw_Data(95).to_Measurement_Data()
-print(t.tof_eVs)
-plt.plot(t.energy_axis,t.get_eV_tof()[0])
-# %%
-(xuv,str1,str2) = X[0].get_augmented_spectra(95)
-d = X[0].to_Raw_Data(95)
-t= d.to_Measurement_Data()
-print(d.TOF_times)
-
-(xuv,str1,str2)=X[0].get_augmented_spectra(95)
-plt.plot(tof_ens,str1)
-plt.plot(t.energy_axis,10*t.get_eV_tof()[0])
-# print(X[3].to_Raw_Data(95).TOF_times)
-print(t.tof_in_times)
-print(Raw_Data.TOF_times*10**9)
-# %%
-class CenterAround(tf.keras.constraints.Constraint):
-    #   """Constrains weight tensors to be centered around `ref_value`."""
-
-    def __init__(self, ref_value):
-        self.ref_value = ref_value
-
-    def __call__(self, w):
-        mean = tf.reduce_mean(w)
-        return w - mean + self.ref_value
-
-    def get_config(self):
-        return {'ref_value': self.ref_value}
-# %%
-# %%
-def maxLayer():
-    return MaxPooling2D(pool_size=(8,8),strides=(1,8),padding="same")
-
-def convLayer(filters):
-    return Conv2D(filters=filters, kernel_size=(1, 7), activation="relu", strides=1, padding="same")
+pulses_train, pulses_test, y_train, y_test = train_test_split(
+    wholeset, wholeset, test_size=0.05, random_state=1)
+params = {'batch_size': 100}
+train_ds = Datagenerator(pulses_train, y_train, X=X, **params)
+test_ds = Datagenerator(pulses_test, y_test, X=X, for_train=False, **params)
 
 # %% 
 
 convdim = 128
 
-enc_inputs = Input(shape=(3, 301, 1), name="traces")
+specdim = test_ds.__getitem__(0)[0].shape[2]
+
+enc_inputs = Input(shape=(3, specdim, 1), name="traces")
 
 
 # HIER kernel_size=(3, 500) für bessere Ergebnisse bzw. kernel_size=(1, 500) für zeilenunabh. Mustererkennung
@@ -254,37 +210,36 @@ encoder = tf.keras.Model(enc_inputs, enc_output, name="encoder")
 encoder.summary()
 # end of encoder
 #%%
-
-dec_inputs = Input(shape=(128), name="encoder_output")
+from tensorflow.keras.layers import (Conv1DTranspose, Reshape, Softmax)
+dec_inputs = Input(shape=(convdim), name="encoder_output")
 
 # start of decoder
 x = BatchNormalization()(dec_inputs)
 
-x = Dense(256, activation="relu"
-          #          , kernel_constraint=CenterAround(0)
-          )(x)
+x = Reshape((1,-1))(x)
+x = Conv1DTranspose(filters = 64, kernel_size=8)(x)
+x = Flatten()(x)
+
+dec_outputs = Softmax()(x)
+
+# x = Dense(256, activation="relu"
+#           #          , kernel_constraint=CenterAround(0)
+#           )(x)
 
 
-dec_outputs = Dense(standard_full_time.shape[0], activation="softmax")(x)
+# dec_outputs = Dense(standard_full_time.shape[0], activation="softmax")(x)
+
 decoder = tf.keras.Model(dec_inputs, dec_outputs, name="decoder")
 decoder.summary()
 # end of decoder
-# %%
+ 
 
+# %%
 encoded = encoder(enc_inputs)
 decoded = decoder(encoded)
 merged_model = tf.keras.Model(enc_inputs, decoded, name="merged_model")
 
 merged_model.summary()
-# %%
-
-wholeset = np.arange(len(X))
-
-pulses_train, pulses_test, y_train, y_test = train_test_split(
-    wholeset, wholeset, test_size=0.05, random_state=1)
-params = {'batch_size': 250}
-train_ds = Datagenerator(pulses_train, y_train, X=X, **params)
-test_ds = Datagenerator(pulses_test, y_test, X=X, for_train=False, **params)
 
 # time2=time[abs(time)<250]
 # %%
@@ -341,7 +296,7 @@ testitems= train_ds.__getitem__(0)
 preds=merged_model.predict(testitems[0])
 y_test=testitems[1]
 # %matplotlib inline
-vv=75
+vv=85
 
 
 plt.plot(standard_full_time,y_test[vv])
@@ -353,9 +308,9 @@ plt.plot(standard_full_time,preds[vv],'orange')
 
 plt.figure()
 # plt.plot(tof_ens,testitems[0][vv][0])
-plt.plot(np.arange(326),testitems[0][vv][0])
-plt.plot(np.arange(326),testitems[0][vv][1])
-plt.plot(np.arange(326),testitems[0][vv][2])
+plt.plot(np.arange(specdim),testitems[0][vv][0])
+plt.plot(np.arange(specdim),testitems[0][vv][1])
+plt.plot(np.arange(specdim),testitems[0][vv][2])
 # plt.xlim([500,700])
 
 # %%
