@@ -185,54 +185,68 @@ wholeset = np.arange(len(X))
 
 pulses_train, pulses_test, y_train, y_test = train_test_split(
     wholeset, wholeset, test_size=0.05, random_state=1)
-params = {'batch_size': 100}
+params = {'batch_size': 300}
 train_ds = Datagenerator(pulses_train, y_train, X=X, **params)
 test_ds = Datagenerator(pulses_test, y_test, X=X, for_train=False, **params)
 
-# %% 
+# %%
 
-convdim = 128
+def conv_Encoder(inputs: tf.keras.Input, convdim) -> tf.keras.Model:
+    conv_out = Conv2D(convdim, 
+                      kernel_size=(3, 250), 
+                      activation="relu", 
+                      strides=1, 
+                      padding="same")(inputs)
+    outputs = GlobalMaxPooling2D()(conv_out)
+
+    return tf.keras.Model(inputs, outputs, name="encoder")
+
+def dense_Encoder(inputs: tf.keras.Input) -> tf.keras.Model:
+    x = Flatten()(inputs)
+    x = Dense(256, activation="relu")(x)
+    outputs = Dense(128, activation="relu")(x)
+
+    return tf.keras.Model(inputs, outputs, name="encoder")
+
+
+def convT_Decoder(inputs: tf.keras.Input, outputsize: int) -> tf.keras.Model:
+    if outputsize % 16 != 0:
+        raise(Exception('outputsize must be a multiple of 16!'))
+    
+    num_filters = 16
+    
+    x = BatchNormalization()(inputs)
+    x = Reshape((1,-1))(x)
+    x = Conv1DTranspose(filters = num_filters, kernel_size=outputsize // num_filters)(x)
+    x = Flatten()(x)
+    outputs = Softmax()(x)
+    
+    return tf.keras.Model(inputs, outputs, name="decoder")
+
+def dense_Decoder(inputs: tf.keras.Input, outputsize: int) -> tf.keras.Model:
+    x = BatchNormalization()(inputs)
+    x = Dense(256, activation="relu")(x)
+    outputs = Dense(outputsize, activation="softmax")(x)
+    
+    return tf.keras.Model(inputs, outputs, name="decoder")
+
+
+
+# %%
+convdim = 256
 
 specdim = test_ds.__getitem__(0)[0].shape[2]
 
 enc_inputs = Input(shape=(3, specdim, 1), name="traces")
 
-
-# HIER kernel_size=(3, 500) für bessere Ergebnisse bzw. kernel_size=(1, 500) für zeilenunabh. Mustererkennung
-conv_out = Conv2D(convdim, kernel_size=(3, 250), activation="relu", strides=1, padding="same"
-                  )(enc_inputs)
-
-
-
-enc_output = GlobalMaxPooling2D()(conv_out)
-
-encoder = tf.keras.Model(enc_inputs, enc_output, name="encoder")
+encoder = conv_Encoder(enc_inputs,convdim)
 encoder.summary()
-# end of encoder
-#%%
-from tensorflow.keras.layers import (Conv1DTranspose, Reshape, Softmax)
+
 dec_inputs = Input(shape=(convdim), name="encoder_output")
 
-# start of decoder
-x = BatchNormalization()(dec_inputs)
-
-x = Reshape((1,-1))(x)
-x = Conv1DTranspose(filters = 64, kernel_size=8)(x)
-x = Flatten()(x)
-
-dec_outputs = Softmax()(x)
-
-# x = Dense(256, activation="relu"
-#           #          , kernel_constraint=CenterAround(0)
-#           )(x)
-
-
-# dec_outputs = Dense(standard_full_time.shape[0], activation="softmax")(x)
-
-decoder = tf.keras.Model(dec_inputs, dec_outputs, name="decoder")
+decoder = dense_Decoder(dec_inputs, outputsize=512)
 decoder.summary()
-# end of decoder
- 
+
 
 # %%
 encoded = encoder(enc_inputs)
@@ -247,7 +261,7 @@ merged_model.summary()
 opt = Adam(lr=5e-3, amsgrad=True) 
 lr_schedule = tf.keras.optimizers.schedules.ExponentialDecay(
     initial_learning_rate=0.2, decay_steps=15000, decay_rate=0.99, staircase=True)
-nadam = tf.keras.optimizers.Nadam(learning_rate=0.01)
+nadam = tf.keras.optimizers.Nadam(learning_rate=0.006)
 adagrad = tf.keras.optimizers.Adagrad(
     learning_rate=lr_schedule, initial_accumulator_value=0.1)
 merged_model.compile(optimizer="nadam", loss="KLDivergence",
@@ -296,7 +310,7 @@ testitems= train_ds.__getitem__(0)
 preds=merged_model.predict(testitems[0])
 y_test=testitems[1]
 # %matplotlib inline
-vv=85
+vv=109
 
 
 plt.plot(standard_full_time,y_test[vv])
