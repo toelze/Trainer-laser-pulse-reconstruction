@@ -1,41 +1,44 @@
 # %%
 from dataclasses import dataclass
-from source.process_stages import measurement
+# from source.process_stages import measurement
 # from typing import Tuple
 
 import cupy as cp
 import numpy as np
-# import pandas as pd
-# import scipy
-# from streaking_cal.misc import interp
+
 from cupy import interp
 from numba import boolean, float64, njit, vectorize
 from tensorflow.keras.utils import Sequence
 
 h = 4.135667662  # in eV*fs
+exp_env = {} # dictionary to to all constants and variables concerning the measurement environment
 
-dt = np.dtype([('up', np.float32), ('down', np.float32)])
+
 # import precomputed components of phi_el
 # p*A_THz und A_THz^2 have been sampled at 2 zerocrossings ('up' and 'down') of A with p0 of 1 and E0 of 1
 # to calculate these contributions for arbitrary values, the base values are multiplied by E0 / E0^2 and p0 / 1
-p_times_A_vals = np.fromfile('./resources/m_paval.dat', dtype=dt)
-p_times_A_vals_up = 1/h*cp.asarray(p_times_A_vals['up'])
-p_times_A_vals_down = 1/h*cp.asarray(p_times_A_vals['down'])
+dt = np.dtype([('up', np.float32), ('down', np.float32)])
+
+p_times_A_vals = np.fromfile('./resources/m_paval_32.dat', dtype=dt)
+exp_env['p_times_A_vals_up'] = 1/h*cp.asarray(p_times_A_vals['up'])
+exp_env['p_times_A_vals_down'] = 1/h*cp.asarray(p_times_A_vals['down'])
+A_square_vals = np.fromfile('./resources/m_aquadval_32.dat', dtype=dt)
+exp_env['A_square_vals_up'] = 1/h*cp.asarray(A_square_vals['up'])
+exp_env['A_square_vals_down'] = 1/h*cp.asarray(A_square_vals['down'])
+
+
+# streaking_dict = {}
+
+# exp_env['p_times_A_vals_up']=1/h*cp.asarray(p_times_A_vals['up'])
+# exp_env['p_times_A_vals_down']=1/h*cp.asarray(p_times_A_vals['down'])
+# exp_env['A_square_vals_up']=1/h*cp.asarray(A_square_vals['up'])
+# exp_env['A_square_vals_down']=1/h*cp.asarray(A_square_vals['down'])
+
 del(p_times_A_vals)
-A_square_vals = np.fromfile('./resources/m_aquadval.dat', dtype=dt)
-A_square_vals_up = 1/h*cp.asarray(A_square_vals['up'])
-A_square_vals_down = 1/h*cp.asarray(A_square_vals['down'])
 del(A_square_vals)
 
 
-streaking_dict = {}
 
-measurement_env_dict = {}
-
-# %%
-a = "dd"
-measurement_env_dict = {}
-measurement_env_dict["ddd"]= a
 
 # %%
 
@@ -50,9 +53,9 @@ orig_tof_ens = np.genfromtxt("./resources/energies.csv", delimiter=',')
 
 
 # df0=pd.read_csv("./FLASH-Spectra/0.0119464/"+"spec10.csv",header=None)
-noisepeak = np.fromfile('./resources/noisepeak.dat', dtype="float64")
+# noisepeak = np.fromfile('./resources/noisepeak.dat', dtype="float64")
 # noisepeak=(df0[1].values/sum(df0[1]))[orig_tof_ens<61]
-noisepeak_gpu = cp.asarray(noisepeak)
+# noisepeak_gpu = cp.asarray(noisepeak)
 
 # peak_max_y = orig_tof_ens[len(noisepeak)]-orig_tof_ens[0]
 tof_ens = np.linspace(40, 110, 1401)
@@ -137,7 +140,11 @@ class Energy_eV_Data():
     vls_energies = 1239.84/(vls_pixels*0.0032 + 11.41)  # VLS pix 2 nm calibration 
     vls_energies -= ionization_potential
 
-    def __init__(self, vls_data, tof_data, tof_times, pulse_props):
+    def __init__(self, vls_data: np.ndarray, 
+                 tof_data: np.ndarray, 
+                 tof_times: np.ndarray, 
+                 pulse_props: PulseProperties):
+        
         self.vls_in_data = vls_data # measured data
         self.vls_in_len = len(self.vls_in_data)
 
@@ -153,6 +160,10 @@ class Energy_eV_Data():
         self.spectra = np.asarray([self.vls_pix_to_eVenergies(self.vls_in_data, self.energy_axis),
                                    self.tof_to_eVenergies(self.tof_in_data[0], self.energy_axis),
                                    self.tof_to_eVenergies(self.tof_in_data[1], self.energy_axis) ])
+        
+        self.spectra[0]= self.spectra[0]/sum(self.spectra[0])
+        self.spectra[1]= self.spectra[1]/sum(self.spectra[1])
+        self.spectra[2]= self.spectra[2]/sum(self.spectra[2])
 
 
 
@@ -259,7 +270,6 @@ class Raw_Data():
 
 
     def calc_tof_traces(self):
-        from numpy import argsort, asarray, take_along_axis
 
         tof_traces = self.spectra[1:]
         tof_traces = np.asarray([self.eVenergies_to_tof(tof_traces[0]),
@@ -498,13 +508,13 @@ class StreakedData(object):
             # def eV_in_au(e): return 0.271106*np.sqrt(e)  # from eV to a.u.
 
             # in V/m; shape of Vectorpotential determines: 232000 V/m = 1 meV/fs max streakspeed
-            E0 = 232000*streak_speed
+            E0 = 3.2*232000*streak_speed
             ff1 = cp.flip(fft(pulse_data.tOutput*cp.exp(-1j*fs_in_au(pulse_data.tAxis)*
-                                                 (1/(2)*(self.pulse_props.p0*E0*p_times_A_vals_up +
-                                                         1*E0**2*A_square_vals_up)))))
+                                                 (1/(2)*(self.pulse_props.p0*E0*exp_env['p_times_A_vals_up'] +
+                                                         1*E0**2*exp_env['A_square_vals_up'])))))
             ff2 = cp.flip(fft(pulse_data.tOutput*cp.exp(-1j*fs_in_au(pulse_data.tAxis)*
-                                                 (1/(2)*(self.pulse_props.p0*E0*p_times_A_vals_down +
-                                                         1*E0**2*A_square_vals_down)))))
+                                                 (1/(2)*(self.pulse_props.p0*E0*exp_env['p_times_A_vals_down'] +
+                                                         1*E0**2*exp_env['A_square_vals_down'])))))
 
             streaked0 = cp.square(cp.abs(ff1))
             streaked1 = cp.square(cp.abs(ff2))

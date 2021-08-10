@@ -1,6 +1,6 @@
 # %%
 
-
+# TODO: prüfen, ob spektren norm 1 haben
 # TODO RawData refactorn
 # TODO: strshift auf letzte Klasse verlagern
 # TODO: wie können die wichtigsten Daten elegant mit geliefert werden beim Erzeugen eines neuen Objekt?
@@ -8,110 +8,55 @@
 # TODO: composition: Klassen halten Daten für Pulsparameter, für statische/ variable Messumgebung,
 # TODO neuronales Netz anpassen
 
+# TODO: Grafik: welche Periodendauern werden wie rekonstruiert? (testdaten)
 # TODO: grafiken erzeugen : Genauigkeit über time-bandwidth-product
 # TODO:                     Genauigkeit über num_electrons
 
+# TODO: delete files not used
 
-# import datetime
+
 import os
 
 import cupy as cp
 import matplotlib.pyplot as plt
-from numba.cuda import test
-# from streaking_cal.misc import interp
 import numpy as np
 import pandas as pd
-# import scipy as sp
 import tensorflow as tf
-# from streaking_cal.misc import interp
-# from cupy import interp
-# from numba import boolean, float64, njit, vectorize
-# from numpy.random import rand, randint
-# from progressbar import ProgressBar
-# from scipy.interpolate import interp1d
-# from scipy.signal import gaussian
+
 from sklearn.model_selection import train_test_split
 from tensorflow.keras import Input
-from tensorflow.keras.layers import (AveragePooling2D, BatchNormalization,
-                                     Conv2D, Dense, Flatten,
-                                     GlobalMaxPooling2D, Lambda, MaxPooling2D,
-                                     Subtract)
+from tensorflow.keras.layers import (Reshape, BatchNormalization,
+                                     Conv2D, Dense, Flatten, Softmax,
+                                     GlobalMaxPooling2D, Conv1DTranspose,
+                                     ReLU)
 from tensorflow.keras.optimizers import Adam
-# from tensorflow_addons.layers import WeightNormalization
-# from tensorflow.keras.regularizers import l1_l2
+
+from source.class_collection import (Datagenerator, PulseProperties)
+from source.process_stages import streaking
 
 from streaking_cal.statistics import weighted_avg_and_std
 
-# try:
-#     # Disable all GPUS
-#     tf.config.set_visible_devices([], 'GPU')
-#     visible_devices = tf.config.get_visible_devices()
-#     for device in visible_devices:
-#         assert device.device_type != 'GPU'
-# except:
-#     # Invalid device or cannot modify virtual devices once initialized.
-#     pass
-
-
-# tf.config.experimental.set_lms_enabled(True)
-
-# gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=0.9)
-
-# sess = tf.Session(config=tf.ConfigProto(gpu_options=gpu_options))
-
-
-mempool = cp.get_default_memory_pool()
+# set max used memory by cupy
+# mempool = cp.get_default_memory_pool()
 # with cp.cuda.Device(0):
 #     mempool.set_limit(size=800*1024**2)
 # print(cp.get_default_memory_pool().get_limit())  # 1073741824
 
 
-# from scipy.signal import find_peaks,peak_widths
-# from scipy.ndimage import gaussian_filter
-from source.class_collection import (Datagenerator, 
-                                     StreakedData, 
-                                     PulseProperties)
-from source.process_stages import streaking
 
-# def ws_reg(kernel):
-#     if kernel.shape[0] > 0:
-#         kernel_mean = tf.math.reduce_mean(
-#             kernel, axis=[0, 1, 2], keepdims=True, name='kernel_mean')
-#         kernel = kernel - kernel_mean
-#         kernel_std = tf.math.reduce_std(
-#             kernel, axis=[0, 1, 2], keepdims=True, name='kernel_std')
-#         #     kernel_std = tf.keras.backend.std(kernel, axis=[0, 1, 2], keepdims=True)
-#         kernel = kernel / (kernel_std + 1e-5)
-#     else:
-#         kernel = l1_l2(l1=1e-5, l2=1e-4)(kernel)
-#     return kernel
+# # load noise peak for discretization of spectra
+# dfe = pd.read_csv("./resources/energies.csv", header=None)
+# orig_tof_ens = dfe[0].values
 
 
-# #
-# def weighted_avg_and_std(values, weights):
-#     import math
-#     """
-#     Return the weighted average and standard deviation.
+# # df0=pd.read_csv("./FLASH-Spectra/0.0119464/"+"spec10.csv",header=None)
+# noisepeak = np.fromfile('./resources/noisepeak.dat', dtype="float64")
+# # noisepeak=(df0[1].values/sum(df0[1]))[orig_tof_ens<61]
+# noisepeak_gpu = cp.asarray(noisepeak)
 
-#     values, weights -- Numpy ndarrays with the same shape.
-#     """
-#     average = np.average(values, weights=weights)
-#     # Fast and numerically precise:
-#     variance = np.average((values-average)**2, weights=weights)
-#     return (average, math.sqrt(variance))
+# peak_max_y = orig_tof_ens[len(noisepeak)]-orig_tof_ens[0]
 
 
-# load noise peak for discretization of spectra
-dfe = pd.read_csv("./resources/energies.csv", header=None)
-orig_tof_ens = dfe[0].values
-
-
-# df0=pd.read_csv("./FLASH-Spectra/0.0119464/"+"spec10.csv",header=None)
-noisepeak = np.fromfile('./resources/noisepeak.dat', dtype="float64")
-# noisepeak=(df0[1].values/sum(df0[1]))[orig_tof_ens<61]
-noisepeak_gpu = cp.asarray(noisepeak)
-
-peak_max_y = orig_tof_ens[len(noisepeak)]-orig_tof_ens[0]
 tof_ens = np.linspace(40, 110, 1401)
 tof_ens_gpu = cp.asarray(tof_ens)
 
@@ -122,20 +67,18 @@ tof_ens_gpu = cp.asarray(tof_ens)
 CentralEnergy = 73
 h = 4.135667662  # in eV*fs
 
-dt = np.dtype([('up', np.float32), ('down', np.float32)])
-
 # import precomputed components of phi_el
 # p*A_THz und A_THz^2 have been sampled at 2 zerocrossings ('up' and 'down') of A with p0 of 1 and E0 of 1
 # to calculate these contributions for arbitrary values, the base values are multiplied by E0 / E0^2 and p0 / 1
-p_times_A_vals = np.fromfile('./resources/m_paval.dat', dtype=dt)
-p_times_A_vals_up = 1/h*cp.asarray(p_times_A_vals['up'])
-p_times_A_vals_down = 1/h*cp.asarray(p_times_A_vals['down'])
-del(p_times_A_vals)
+# p_times_A_vals = np.fromfile('./resources/m_paval.dat', dtype=dt)
+# p_times_A_vals_up = 1/h*cp.asarray(p_times_A_vals['up'])
+# p_times_A_vals_down = 1/h*cp.asarray(p_times_A_vals['down'])
+# del(p_times_A_vals)
 
-A_square_vals = np.fromfile('./resources/m_aquadval.dat', dtype=dt)
-A_square_vals_up = 1/h*cp.asarray(A_square_vals['up'])
-A_square_vals_down = 1/h*cp.asarray(A_square_vals['down'])
-del(A_square_vals)
+# A_square_vals = np.fromfile('./resources/m_aquadval.dat', dtype=dt)
+# A_square_vals_up = 1/h*cp.asarray(A_square_vals['up'])
+# A_square_vals_down = 1/h*cp.asarray(A_square_vals['down'])
+# del(A_square_vals)
 
 # def fs_in_au(t): return 41.3414*t  # from fs to a.u.
 # def eV_in_au(e): return 0.271106*np.sqrt(e)  # from eV to a.u.
@@ -146,15 +89,9 @@ del(A_square_vals)
 standard_full_time = np.loadtxt('./resources/standard_time.txt')
 standard_full_time = np.linspace(-250, 250, 512)
 
-# # background noise for data augmentation is read from actual measured spectra
-# measurednoise_train = np.loadtxt("./resources/measurednoise_train.txt")
-# measurednoise_val = np.loadtxt("./resources/measurednoise_val.txt")
-
 print("Num GPUs Available: ", len(
     tf.config.experimental.list_physical_devices('GPU')))
 print(tf.version.VERSION)
-
-# %%
 
 
 # %%
@@ -190,21 +127,32 @@ train_ds = Datagenerator(pulses_train, y_train, X=X, **params)
 test_ds = Datagenerator(pulses_test, y_test, X=X, for_train=False, **params)
 
 # %%
-
 def conv_Encoder(inputs: tf.keras.Input, convdim) -> tf.keras.Model:
     conv_out = Conv2D(convdim, 
                       kernel_size=(3, 250), 
-                      activation="relu", 
+                      activation="linear", 
                       strides=1, 
                       padding="same")(inputs)
-    outputs = GlobalMaxPooling2D()(conv_out)
+    
+    x = GlobalMaxPooling2D()(conv_out)
+    x = BatchNormalization()(x)
+    x = ReLU()(x)
+    
+    outputs = Dense(convdim, activation="relu")(x)
+    
 
     return tf.keras.Model(inputs, outputs, name="encoder")
 
 def dense_Encoder(inputs: tf.keras.Input) -> tf.keras.Model:
     x = Flatten()(inputs)
     x = Dense(256, activation="relu")(x)
-    outputs = Dense(128, activation="relu")(x)
+    x = BatchNormalization()(x)
+    x = ReLU()(x)
+    
+    outputs = Dense(128, activation="linear")(x)
+
+    
+
 
     return tf.keras.Model(inputs, outputs, name="encoder")
 
@@ -215,7 +163,7 @@ def convT_Decoder(inputs: tf.keras.Input, outputsize: int) -> tf.keras.Model:
     
     num_filters = 16
     
-    x = BatchNormalization()(inputs)
+    # x = BatchNormalization()(inputs)
     x = Reshape((1,-1))(x)
     x = Conv1DTranspose(filters = num_filters, kernel_size=outputsize // num_filters)(x)
     x = Flatten()(x)
@@ -224,8 +172,7 @@ def convT_Decoder(inputs: tf.keras.Input, outputsize: int) -> tf.keras.Model:
     return tf.keras.Model(inputs, outputs, name="decoder")
 
 def dense_Decoder(inputs: tf.keras.Input, outputsize: int) -> tf.keras.Model:
-    x = BatchNormalization()(inputs)
-    x = Dense(256, activation="relu")(x)
+    x = Dense(256, activation="relu")(inputs)
     outputs = Dense(outputsize, activation="softmax")(x)
     
     return tf.keras.Model(inputs, outputs, name="decoder")
@@ -270,7 +217,7 @@ merged_model.compile(optimizer="nadam", loss="KLDivergence",
 history = merged_model.fit(x=train_ds, validation_data=test_ds,
                     #                     use_multiprocessing=True,
                     #                     workers=4,
-                    epochs=100
+                    epochs=1
                     )
 # %%
 from tensorflow.keras.layers import (AveragePooling2D, BatchNormalization,
@@ -280,16 +227,16 @@ from tensorflow.keras.layers import (AveragePooling2D, BatchNormalization,
 
 # ----------------------SAVE MODELS-------------------------
 
-# merged_model.save('./models/RAW_mat_mergedm-95')
-# encoder.save('./models/RAW_mat_encoder-95')
-# decoder.save('./models/RAW_mat_decoder-95')
+# merged_model.save('./models/3.2THz-eV-95-merged')
+# encoder.save('./models/3.2THz-eV-95-encoder')
+# decoder.save('./models/3.2THz-eV-95-decoder')
 
 
 # ----------------------LOAD MODELS-------------------------
 
-# merged_model = tf.keras.models.load_model('./models/RAW_mat_mergedm')
-# encoder = tf.keras.models.load_model('./models/RAW_mat_encoder')
-# decoder = tf.keras.models.load_model('./models/RAW_mat_decoder')
+# merged_model = tf.keras.models.load_model('./models/3.2THz-eV-95-merged')
+# encoder = tf.keras.models.load_model('./models/3.2THz-eV-95-encoder')
+# decoder = tf.keras.models.load_model('./models/3.2THz-eV-95-decoder')
 # %%
 
 
@@ -305,12 +252,14 @@ from tensorflow.keras.layers import (AveragePooling2D, BatchNormalization,
 #model-normal:1401 points, 500 els, 25 epochs, 130000 pulses val_loss= 0.3019 (0.2921-0.3019)
 #adam 1e-3
 #model-normal:1401 points 25 epochs, 130000 pulses val_loss= 0.3550 (0.3550-0.3568)
+
 # %%
+enax=np.arange(45,110.1,0.2)
 testitems= train_ds.__getitem__(0)
 preds=merged_model.predict(testitems[0])
 y_test=testitems[1]
 # %matplotlib inline
-vv=109
+vv=73
 
 
 plt.plot(standard_full_time,y_test[vv])
@@ -322,17 +271,18 @@ plt.plot(standard_full_time,preds[vv],'orange')
 
 plt.figure()
 # plt.plot(tof_ens,testitems[0][vv][0])
-plt.plot(np.arange(specdim),testitems[0][vv][0])
-plt.plot(np.arange(specdim),testitems[0][vv][1])
-plt.plot(np.arange(specdim),testitems[0][vv][2])
+plt.plot(enax,testitems[0][vv][0])
+plt.plot(enax,testitems[0][vv][1])
+plt.plot(enax,testitems[0][vv][2])
 # plt.xlim([500,700])
+
 
 # %%
 import os
 import re
 from itertools import repeat
 
-folder="./resources/raw_mathematica/down1/"
+folder="./resources/raw_mathematica/down/"
 files=os.listdir(folder)
 
 numbers=list(map(re.findall,repeat("[0-9]{5}"),files))
@@ -410,10 +360,10 @@ train_ds = Datagenerator(pulses_train, y_train, X=X, **params)
 test_ds = Datagenerator(pulses_test, y_test, X=X, for_train=False, **params)
 
 
-encoded_t0 = encoded_t
-lower_dim_input0 = lower_dim_input
-encoded_t =[encoder(test_ds.__getitem__(i)[0]) for i in range(30)]
-encoded_t = np.concatenate(encoded_t, axis = 0)
+# encoded_t0 = encoded_t
+# lower_dim_input0 = lower_dim_input
+# encoded_t =[encoder(test_ds.__getitem__(i)[0]) for i in range(30)]
+# encoded_t = np.concatenate(encoded_t, axis = 0)
 
 # encoded_t2=encoder(testitems2[:300])
 #%%
