@@ -1,6 +1,7 @@
 # %%
 
-# TODO: prüfen, ob spektren norm 1 haben
+
+# TODO: import 'to_eVs_from_file' funktioniert nicht TOFs sind falsch skaliert
 # TODO RawData refactorn
 # TODO: strshift auf letzte Klasse verlagern
 # TODO: wie können die wichtigsten Daten elegant mit geliefert werden beim Erzeugen eines neuen Objekt?
@@ -31,7 +32,7 @@ from tensorflow.keras.layers import (Reshape, BatchNormalization,
                                      ReLU)
 from tensorflow.keras.optimizers import Adam
 
-from source.class_collection import (Datagenerator, PulseProperties)
+from source.class_collection import (Data_Generator, Pulse_Properties)
 from source.process_stages import streaking
 
 from streaking_cal.statistics import weighted_avg_and_std
@@ -98,20 +99,22 @@ print(tf.version.VERSION)
 # timeit
 # pbar = ProgressBar()
 from tqdm import tqdm as pbar
+from source.process_stages import get_exp_env
 
 num_pulses = 100000
 streakspeed = 95  # meV/fs
 X = [""]*num_pulses
 y = [""]*num_pulses
+exp_env = get_exp_env()
 
 for i in pbar(range(num_pulses),colour = 'red', ncols= 100):
-    pulse_props= PulseProperties(fwhm_t = np.random.uniform(70, 150),  # in fs
+    pulse_props= Pulse_Properties(fwhm_t = np.random.uniform(70, 150),  # in fs
                                  fwhm_E = np.random.uniform(0.2, 1.8), # in eV
                                  num_electrons0 = np.random.randint(15, 40), 
                                  num_electrons1 = np.random.randint(15, 40), 
                                  centralE = np.random.uniform(65,75))
 
-    x1 = streaking(95,pulse_props)
+    x1 = streaking(streakspeed = 95, exp_env = exp_env, pulse_props = pulse_props)
 
     # x1.get_spectra(streakspeed, discretized=False)
     X[i] = x1
@@ -123,8 +126,8 @@ wholeset = np.arange(len(X))
 pulses_train, pulses_test, y_train, y_test = train_test_split(
     wholeset, wholeset, test_size=0.05, random_state=1)
 params = {'batch_size': 300}
-train_ds = Datagenerator(pulses_train, y_train, X=X, **params)
-test_ds = Datagenerator(pulses_test, y_test, X=X, for_train=False, **params)
+train_ds = Data_Generator(pulses_train, y_train, X=X, **params)
+test_ds = Data_Generator(pulses_test, y_test, X=X, for_train=False, **params)
 
 # %%
 def conv_Encoder(inputs: tf.keras.Input, convdim) -> tf.keras.Model:
@@ -219,9 +222,7 @@ history = merged_model.fit(x=train_ds, validation_data=test_ds,
                     #                     workers=4,
                     epochs=1
                     )
-# %%
-from tensorflow.keras.layers import (AveragePooling2D, BatchNormalization,
-                                     Flatten, MaxPooling2D)
+
 
 # %%
 
@@ -234,9 +235,9 @@ from tensorflow.keras.layers import (AveragePooling2D, BatchNormalization,
 
 # ----------------------LOAD MODELS-------------------------
 
-# merged_model = tf.keras.models.load_model('./models/3.2THz-eV-95-merged')
-# encoder = tf.keras.models.load_model('./models/3.2THz-eV-95-encoder')
-# decoder = tf.keras.models.load_model('./models/3.2THz-eV-95-decoder')
+merged_model = tf.keras.models.load_model('./models/3.2THz-eV-95-merged')
+encoder = tf.keras.models.load_model('./models/3.2THz-eV-95-encoder')
+decoder = tf.keras.models.load_model('./models/3.2THz-eV-95-decoder')
 # %%
 
 
@@ -259,7 +260,7 @@ testitems= train_ds.__getitem__(0)
 preds=merged_model.predict(testitems[0])
 y_test=testitems[1]
 # %matplotlib inline
-vv=73
+vv=288
 
 
 plt.plot(standard_full_time,y_test[vv])
@@ -276,6 +277,12 @@ plt.plot(enax,testitems[0][vv][1])
 plt.plot(enax,testitems[0][vv][2])
 # plt.xlim([500,700])
 
+
+# %%
+from source.process_stages import to_eVs_from_file
+from matplotlib import pyplot as plt
+mop = to_eVs_from_file(9656)
+plt.plot(mop.self.exp_env.energy_axis,mop.spectra[0])
 
 # %%
 import os
@@ -333,7 +340,7 @@ plt.xlim([500,700])
 
 # %%
 # encode synth pulses is batches of 300 and concatenate
-from source.class_collection import Datagenerator, StreakedData, Raw_Data
+from source.class_collection import Data_Generator, Streaked_Data, Raw_Data
 
 num_pulses = 10000
 streakspeed = 95  # meV/fs
@@ -341,7 +348,7 @@ X = [""]*num_pulses
 y = [""]*num_pulses
 
 for i in pbar(range(num_pulses),colour = 'red', ncols= 100):
-    x1 = StreakedData.from_GS(dT=np.random.uniform(20/2.355, 120/2.355), 
+    x1 = Streaked_Data.from_GS(dT=np.random.uniform(20/2.355, 120/2.355), 
             dE=np.random.uniform(0.2/2.355, 1.8/2.355), 
             num_electrons1=np.random.randint(15, 40), 
             num_electrons2=np.random.randint(15, 40),
@@ -356,8 +363,8 @@ wholeset = np.arange(len(X))
 pulses_train, pulses_test, y_train, y_test = train_test_split(
     wholeset, wholeset, test_size=0.95, random_state=1)
 params = {'batch_size': 300}
-train_ds = Datagenerator(pulses_train, y_train, X=X, **params)
-test_ds = Datagenerator(pulses_test, y_test, X=X, for_train=False, **params)
+train_ds = Data_Generator(pulses_train, y_train, X=X, **params)
+test_ds = Data_Generator(pulses_test, y_test, X=X, for_train=False, **params)
 
 
 # encoded_t0 = encoded_t

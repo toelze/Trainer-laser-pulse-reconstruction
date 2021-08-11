@@ -1,30 +1,31 @@
 # %%
-from dataclasses import dataclass
-# from source.process_stages import measurement
-# from typing import Tuple
+from dataclasses import (dataclass, field)
 
 import cupy as cp
-import numpy as np
-
 from cupy import interp
-from numba import boolean, float64, njit, vectorize
+
+import numpy as np
+from numba import njit
 from tensorflow.keras.utils import Sequence
 
-h = 4.135667662  # in eV*fs
-exp_env = {} # dictionary to to all constants and variables concerning the measurement environment
+from typing import Union, List
 
 
-# import precomputed components of phi_el
-# p*A_THz und A_THz^2 have been sampled at 2 zerocrossings ('up' and 'down') of A with p0 of 1 and E0 of 1
-# to calculate these contributions for arbitrary values, the base values are multiplied by E0 / E0^2 and p0 / 1
-dt = np.dtype([('up', np.float32), ('down', np.float32)])
+# h = 4.135667662  # in eV*fs
+# exp_env = {} # dictionary to to all constants and variables concerning the measurement environment
 
-p_times_A_vals = np.fromfile('./resources/m_paval_32.dat', dtype=dt)
-exp_env['p_times_A_vals_up'] = 1/h*cp.asarray(p_times_A_vals['up'])
-exp_env['p_times_A_vals_down'] = 1/h*cp.asarray(p_times_A_vals['down'])
-A_square_vals = np.fromfile('./resources/m_aquadval_32.dat', dtype=dt)
-exp_env['A_square_vals_up'] = 1/h*cp.asarray(A_square_vals['up'])
-exp_env['A_square_vals_down'] = 1/h*cp.asarray(A_square_vals['down'])
+
+# # import precomputed components of phi_el
+# # p*A_THz und A_THz^2 have been sampled at 2 zerocrossings ('up' and 'down') of A with p0 of 1 and E0 of 1
+# # to calculate these contributions for arbitrary values, the base values are multiplied by E0 / E0^2 and p0 / 1
+# dt = np.dtype([('up', np.float32), ('down', np.float32)])
+
+# p_times_A_vals = np.fromfile('./resources/m_paval_32.dat', dtype=dt)
+# exp_env['p_times_A_vals_up'] = 1/h*cp.asarray(p_times_A_vals['up'])
+# exp_env['p_times_A_vals_down'] = 1/h*cp.asarray(p_times_A_vals['down'])
+# A_square_vals = np.fromfile('./resources/m_aquadval_32.dat', dtype=dt)
+# exp_env['A_square_vals_up'] = 1/h*cp.asarray(A_square_vals['up'])
+# exp_env['A_square_vals_down'] = 1/h*cp.asarray(A_square_vals['down'])
 
 
 # streaking_dict = {}
@@ -34,22 +35,21 @@ exp_env['A_square_vals_down'] = 1/h*cp.asarray(A_square_vals['down'])
 # exp_env['A_square_vals_up']=1/h*cp.asarray(A_square_vals['up'])
 # exp_env['A_square_vals_down']=1/h*cp.asarray(A_square_vals['down'])
 
-del(p_times_A_vals)
-del(A_square_vals)
 
 
 
 
-# %%
 
 # %%
 
-def fs_in_au(t): return 41.3414*t  # from fs to a.u.
-def eV_in_au(e): return 0.271106*np.sqrt(e)  # from eV to a.u.
+# %%
+
+# def fs_in_au(t): return 41.3414*t  # from fs to a.u.
+# def eV_in_au(e): return 0.271106*np.sqrt(e)  # from eV to a.u.
 
 
 # load noise peak for discretization of spectra
-orig_tof_ens = np.genfromtxt("./resources/energies.csv", delimiter=',')
+# orig_tof_ens = np.genfromtxt("./resources/energies.csv", delimiter=',')
 
 
 # df0=pd.read_csv("./FLASH-Spectra/0.0119464/"+"spec10.csv",header=None)
@@ -58,17 +58,16 @@ orig_tof_ens = np.genfromtxt("./resources/energies.csv", delimiter=',')
 # noisepeak_gpu = cp.asarray(noisepeak)
 
 # peak_max_y = orig_tof_ens[len(noisepeak)]-orig_tof_ens[0]
-tof_ens = np.linspace(40, 110, 1401)
-tof_ens_gpu = cp.asarray(tof_ens)
+# tof_ens = np.
 
 
-dt2 = np.dtype([('xuv', np.float64), ('up', np.float64), ('down', np.float64)])
+# dt2 = np.dtype([('xuv', np.float64), ('up', np.float64), ('down', np.float64)])
 
 
 
 # Pulse class returns temporal profile on basis of this time axis
-standard_full_time = np.loadtxt('./resources/standard_time.txt')
-standard_full_time = np.linspace(-250, 250, 512)
+reconstruction_time = np.loadtxt('./resources/standard_time.txt')
+reconstruction_time = np.linspace(-250, 250, 512)
 
 # %%
 class InputMissingError(Exception):
@@ -82,10 +81,44 @@ class InputMissingError(Exception):
     def __init__(self, message):
         self.message = message
 
+       
+        
+        
+# %%
+
+@dataclass(frozen=True)  
+class Exp_Env:    
+    
+    h: float     # planck constant in eV*fs
+    
+    THz_p_times_A_vals_up : cp.ndarray 
+    THz_p_times_A_vals_down : cp.ndarray
+    THz_A_square_vals_up : cp.ndarray
+    THz_A_square_vals_down : cp.ndarray
+    
+    tof_params: np.ndarray
+    tof_times: np.ndarray
+    tof_zeroindx: int
+    tof_response: np.ndarray
+    
+    energy_axis: np.ndarray
+    
+    ionization_potential: float
+    vls_params: np.ndarray
+    vls_pixels: np.ndarray
+    vls_energies: np.ndarray
+    
+    @staticmethod
+    def fs_in_au(t): return 41.3414*t  # from fs to a.u.
+    
+    @staticmethod
+    def eV_in_au(e): return 0.271106*np.sqrt(e)  # from eV to a.u.
+
+
 
 # %%
 @dataclass
-class PulseData:
+class Pulse_Data:
     enAxis: cp.ndarray
     enOutput: cp.ndarray 
     tAxis: cp.ndarray
@@ -103,7 +136,7 @@ class PulseData:
 
 
 
-class PulseProperties:
+class Pulse_Properties:
     
     def __init__(self, fwhm_t: float, 
                  fwhm_E: float, 
@@ -119,47 +152,44 @@ class PulseProperties:
         self.num_electrons0 = num_electrons0
         self.num_electrons1 = num_electrons1
         self.centralE = centralE
-        self.p0 = PulseProperties.eV_in_au(centralE)
+        self.p0 = 0.271106*np.sqrt(centralE)
 
 
-    @staticmethod
-    def fs_in_au(t): return 41.3414*t  # from fs to a.u.
-
-    @staticmethod
-    def eV_in_au(e): return 0.271106*np.sqrt(e)  # from eV to a.u.
 
 # %%
 class Energy_eV_Data():
-    tof_params = [-755.6928301474567, 187.2222222222222, -39.8]
-    vls_params = [1239.84, 0.0032, 11.41]
-    energy_axis = np.arange(45,110.1,0.2)
-    zeroindx = 674
+    # self.exp_env.tof_params = [-755.6928301474567, 187.2222222222222, -39.8]
+    # self.exp_env.vls_params = [1239.84, 0.0032, 11.41]
+    # self.exp_env.energy_axis = np.arange(45,110.1,0.2)
+    # self.exp_env.tof_zeroindx = 674
 
-    ionization_potential = 21.55 #Neon 2p 
-    vls_pixels = np.arange(1024) + 1 # from Mathematica + indexcorrection
-    vls_energies = 1239.84/(vls_pixels*0.0032 + 11.41)  # VLS pix 2 nm calibration 
-    vls_energies -= ionization_potential
+    # exp_env.ionization_potential = 21.55 #Neon 2p 
+    # exp_env.vls_pixels = np.arange(1024) + 1 # from Mathematica + indexcorrection
+    # exp_env.vls_energies = self.exp_env.vls_params[0]/(exp_env.vls_pixels*self.exp_env.vls_params[1] + self.exp_env.vls_params[2])  # VLS pix 2 nm calibration 
+    # exp_env.vls_energies -= exp_env.ionization_potential
 
     def __init__(self, vls_data: np.ndarray, 
                  tof_data: np.ndarray, 
                  tof_times: np.ndarray, 
-                 pulse_props: PulseProperties):
+                 exp_env: Exp_Env,
+                 pulse_props: Union[Pulse_Properties, None]):
         
         self.vls_in_data = vls_data # measured data
         self.vls_in_len = len(self.vls_in_data)
 
         self.pulse_props = pulse_props
+        self.exp_env = exp_env
 
         self.tof_in_data = tof_data
         self.tof_in_times = tof_times
 
-        self.tof_eVs = self.tof_params[0]**2/(self.tof_in_times - self.tof_params[1])**2 + self.tof_params[2]
+        self.tof_eVs = self.exp_env.tof_params[0]**2/(self.tof_in_times - self.exp_env.tof_params[1])**2 + self.exp_env.tof_params[2]
 
-        self.tof_energies = np.array(list(map(self.tof_to_eV,self.tof_in_times[self.zeroindx + 1:]*1e9)))  # OK
+        self.tof_energies = np.array(list(map(self.tof_to_eV,self.tof_in_times[self.exp_env.tof_zeroindx + 1:]*1e9)))  # OK
 
-        self.spectra = np.asarray([self.vls_pix_to_eVenergies(self.vls_in_data, self.energy_axis),
-                                   self.tof_to_eVenergies(self.tof_in_data[0], self.energy_axis),
-                                   self.tof_to_eVenergies(self.tof_in_data[1], self.energy_axis) ])
+        self.spectra = np.asarray([self.vls_pix_to_eVenergies(self.vls_in_data, self.exp_env.energy_axis),
+                                   self.tof_to_eVenergies(self.tof_in_data[0], self.exp_env.energy_axis),
+                                   self.tof_to_eVenergies(self.tof_in_data[1], self.exp_env.energy_axis) ])
         
         self.spectra[0]= self.spectra[0]/sum(self.spectra[0])
         self.spectra[1]= self.spectra[1]/sum(self.spectra[1])
@@ -170,14 +200,14 @@ class Energy_eV_Data():
     def vls_pix_to_eVenergies(self,vls,energies = None):
         '''interpolation to calculate a spectrum from a VLS signal'''
         if energies is None:
-            energies = self.energy_axis
-        spec =  np.interp(energies,self.vls_energies[::-1],vls[::-1],0,0)
+            energies = self.exp_env.energy_axis
+        spec =  np.interp(energies,self.exp_env.vls_energies[::-1],vls[::-1],0,0)
         return spec
 
     def tof_to_eVenergies(self,tof,energies = None):
         '''interpolation and intensity correction to calculate a spectrum from a TOF signal'''
         if energies is None: 
-            energies = self.energy_axis
+            energies = self.exp_env.energy_axis
 
         spec = -self.correctints(tof)
         spec = np.interp(energies,self.tof_energies[::-1],spec[::-1],0,0)
@@ -185,43 +215,45 @@ class Energy_eV_Data():
 
     def correctints(self,spec):
         '''from TOF times to eV'''
-        return 0.5 * self.tof_params[0] * spec[self.zeroindx + 1:]/(self.tof_energies + self.tof_params[2])**1.5
+        return 0.5 * self.exp_env.tof_params[0] * spec[self.exp_env.tof_zeroindx + 1:]/(self.tof_energies + self.exp_env.tof_params[2])**1.5
 
     def tof_to_eV(self,t):
 
-        return self.tof_params[0]**2/(t - self.tof_params[1])**2 - self.tof_params[2]
+        return self.exp_env.tof_params[0]**2/(t - self.exp_env.tof_params[1])**2 - self.exp_env.tof_params[2]
 
 
 # %%
 class Raw_Data():
     
     # parameters from TOF calibration
-    tof_params = np.asarray([-755.6928301474567, 187.2222222222, -39.8])
+    # self.exp_env.tof_params = np.asarray([-755.6928301474567, 187.2222222222, -39.8])
 
-    tof_times = np.asarray([(i-1)/3600e6 for i in np.arange(2500)+1]) # OK
-    zeroindx = 674 # OK
+    # self.exp_env.tof_times = np.asarray([(i-1)/3600e6 for i in np.arange(2500)+1]) # OK
+    # self.exp_env.tof_zeroindx = 674 # OK
 
-    real_tof_response = np.fromfile("./resources/TOF_response.dat", dtype="float64")
-    real_tof_response = real_tof_response/np.sum(real_tof_response)
-    ionization_potential = 21.55 #Neon 2p 
+    # self.exp_env.tof_response = np.fromfile("./resources/TOF_response.dat", dtype="float64")
+    # self.exp_env.tof_response = self.exp_env.tof_response/np.sum(self.exp_env.tof_response)
+    # exp_env.ionization_potential = 21.55 #Neon 2p 
 
-    vls_pixels = np.arange(1024) + 1 # from Mathematica + indexcorrection
-    vls_enenergies = 1239.84/(vls_pixels*0.0032 + 11.41)  # VLS pix 2 nm calibration 
-    vls_enenergies -= ionization_potential
+    # exp_env.vls_pixels = np.arange(1024) + 1 # from Mathematica + indexcorrection
+    # exp_env.vls_enenergies = 1239.84/(exp_env.vls_pixels*0.0032 + 11.41)  # VLS pix 2 nm calibration 
+    # exp_env.vls_enenergies -= exp_env.ionization_potential
 
 
-    vls_pixels = np.arange(1024)  # pixels of spectrometer
+    # exp_env.vls_pixels = np.arange(1024)  # pixels of spectrometer
 
     def __init__(self, spectra: np.ndarray, 
                  energies: np.ndarray,
-                 pulse_props: PulseProperties):
+                 pulse_props: Pulse_Properties,
+                 exp_env: Exp_Env):
         self.pulse_props = pulse_props
+        self.exp_env = exp_env
         self.energy_axis = energies
 
         self.spectra = spectra
         self.tof_response = self.get_random_response_curve()
 
-        self.tof_energies = np.array(list(map(self.tof_to_eV,self.tof_times[self.zeroindx + 1:]*1e9)))  # OK
+        self.tof_energies = np.array(list(map(self.tof_to_eV,self.exp_env.tof_times[self.exp_env.tof_zeroindx + 1:]*1e9)))  # OK
 
 
         self.calc_vls_spectrum()
@@ -231,23 +263,23 @@ class Raw_Data():
 
     def tof_to_eV(self,t):
 
-        return self.tof_params[0]**2/(t - self.tof_params[1])**2 - self.tof_params[2]
+        return self.exp_env.tof_params[0]**2/(t - self.exp_env.tof_params[1])**2 - self.exp_env.tof_params[2]
 
 
     def get_random_response_curve(self):
-        response=np.abs(self.real_tof_response-0.015+0.03*np.random.rand(58))
+        response=np.abs(self.exp_env.tof_response-0.015+0.03*np.random.rand(58))
 
         response= response/np.sum(response)
         return response
 
     def correctints(self,spec):
         '''from TOF times to eV'''
-        return 0.5 * self.tof_params[0] * spec[self.zeroindx + 1:]/(self.tof_energies + self.tof_params[2])**1.5
+        return 0.5 * self.exp_env.tof_params[0] * spec[self.exp_env.tof_zeroindx + 1:]/(self.tof_energies + self.exp_env.tof_params[2])**1.5
 
     def uncorrectints(self,cspec):
         '''from eV to TOF times'''
-        spec = cspec *(self.tof_energies + self.tof_params[[2]])**1.5/(0.5*self.tof_params[[0]])
-        spec = np.pad(spec, (self.zeroindx + 1,0),'constant',constant_values=(0, 0))
+        spec = cspec *(self.tof_energies + self.exp_env.tof_params[[2]])**1.5/(0.5*self.exp_env.tof_params[[0]])
+        spec = np.pad(spec, (self.exp_env.tof_zeroindx + 1,0),'constant',constant_values=(0, 0))
         return spec
 
     def eVenergies_to_tof(self,spec, energies = None):
@@ -289,7 +321,7 @@ class Raw_Data():
         '''interpolation to calculate a VLS signal from a spectrum'''
         if energies is None:
             energies = self.energy_axis
-        vls = np.interp(self.vls_enenergies,energies,spec,0,0)
+        vls = np.interp(self.exp_env.vls_energies,energies,spec,0,0)
         return vls
     # VLS pixel to eV
 
@@ -297,7 +329,7 @@ class Raw_Data():
         '''interpolation to calculate a spectrum from a VLS signal'''
         if energies is None:
             energies = self.energy_axis
-        spec =  np.interp(energies,self.vls_enenergies[::-1],vls[::-1],0,0)
+        spec =  np.interp(energies,self.exp_env.vls_energies[::-1],vls[::-1],0,0)
         return spec
 
 
@@ -355,8 +387,8 @@ class Raw_Data():
         vls_new = self.augment_vls()
         aug_tof0, aug_tof1 = self.augment_tof()
 
-        tof_new0 = aug_tof0[self.zeroindx + 1:]
-        tof_new1 = aug_tof1[self.zeroindx + 1:]
+        tof_new0 = aug_tof0[self.exp_env.tof_zeroindx + 1:]
+        tof_new1 = aug_tof1[self.exp_env.tof_zeroindx + 1:]
 
         vls_new = pad(vls_new, pad_width=(0, len(tof_new0)-len(self.vls_signal)))
 
@@ -383,8 +415,8 @@ class Raw_Data():
 
     def energies_to_tof_times(self, energies_eV):  # in ns
         from numpy import sqrt
-        TOF_times = self.tof_params[1]+ self.tof_params[0]**2/sqrt((self.tof_params[0]**2)*(
-            energies_eV - self.tof_params[2]))  # funktioniert
+        TOF_times = self.exp_env.tof_params[1]+ self.exp_env.tof_params[0]**2/sqrt((self.exp_env.tof_params[0]**2)*(
+            energies_eV - self.exp_env.tof_params[2]))  # funktioniert
         return TOF_times  # -min(TOF_times)
 
     def vls_pixel_to_energies(self, vls_pixel):
@@ -398,7 +430,7 @@ class Raw_Data():
     def tof_signal_correction(self, signal):
         adjusted_signal = -4 * \
             (signal*(self.energy_axis +
-                     self.tof_params[2])**1.5)/self.tof_params[0]
+                     self.exp_env.tof_params[2])**1.5)/self.exp_env.tof_params[0]
         return adjusted_signal
 
 
@@ -434,11 +466,11 @@ class Raw_Data():
 
         return discrete_positions
     
-    def to_Measurement_Data(self):
-        measurement_obj = Energy_eV_Data(self.augment_vls(), 
-                                         self.augment_tof(),
-                                         self.tof_times, 
-                                         self.pulse_props) 
+    # def to_Measurement_Data(self):
+    #     measurement_obj = Energy_eV_Data(self.augment_vls(), 
+    #                                      self.augment_tof(),
+    #                                      self.exp_env.tof_times, 
+    #                                      self.pulse_props) 
 
 
         return measurement_obj
@@ -446,19 +478,20 @@ class Raw_Data():
 
 # %%
 
-class StreakedData(object):
-    @staticmethod
-    def fs_in_au(t): return 41.3414*t  # from fs to a.u.
-    @staticmethod
-    def eV_in_au(e): return 0.271106*np.sqrt(e)  # from eV to a.u.
-    h = 4.135667662  # in eV*fs
+class Streaked_Data(object):
+    # @staticmethod
+    # def self.exp_env.fs_in_au(t): return 41.3414*t  # from fs to a.u.
+    # @staticmethod
+    # def self.exp_env.eV_in_au(e): return 0.271106*np.sqrt(e)  # from eV to a.u.
+    # exp_env.h = 4.135667662  # in eV*fs
+    tof_ens_gpu = cp.linspace(40, 110, 1401)
 
-    class Data_Nonexisting_Error(Exception):
-        def __init__(self, message):
-            self.message = message
-#
 
-    def __init__(self, pulse_props, pulse_data, streakspeed: float):
+    def __init__(self, 
+                 pulse_props: Pulse_Properties, 
+                 pulse_data: Pulse_Data, 
+                 exp_env: Exp_Env,
+                 streakspeed: float):
 
         from streaking_cal.statistics import weighted_avg_and_std
 
@@ -466,7 +499,7 @@ class StreakedData(object):
         #     EnAxis.get(), cp.square(cp.abs(EnOutput)).get())
 
         self.pulse_props = pulse_props
-
+        self.exp_env = exp_env     
 
         
         self.__is_low_res = False
@@ -510,19 +543,19 @@ class StreakedData(object):
             # in V/m; shape of Vectorpotential determines: 232000 V/m = 1 meV/fs max streakspeed
             E0 = 3.2*232000*streak_speed
             ff1 = cp.flip(fft(pulse_data.tOutput*cp.exp(-1j*fs_in_au(pulse_data.tAxis)*
-                                                 (1/(2)*(self.pulse_props.p0*E0*exp_env['p_times_A_vals_up'] +
-                                                         1*E0**2*exp_env['A_square_vals_up'])))))
+                                                 (1/(2)*(self.pulse_props.p0*E0*self.exp_env.THz_p_times_A_vals_up +
+                                                         1*E0**2*self.exp_env.THz_A_square_vals_up)))))
             ff2 = cp.flip(fft(pulse_data.tOutput*cp.exp(-1j*fs_in_au(pulse_data.tAxis)*
-                                                 (1/(2)*(self.pulse_props.p0*E0*exp_env['p_times_A_vals_down'] +
-                                                         1*E0**2*exp_env['A_square_vals_down'])))))
+                                                 (1/(2)*(self.pulse_props.p0*E0*self.exp_env.THz_p_times_A_vals_down +
+                                                         1*E0**2*self.exp_env.THz_A_square_vals_down)))))
 
             streaked0 = cp.square(cp.abs(ff1))
             streaked1 = cp.square(cp.abs(ff2))
 
 
-            streaked0 = interp(tof_ens_gpu, pulse_data.enAxis, streaked0)
-            streaked1 = interp(tof_ens_gpu, pulse_data.enAxis, streaked1)
-            xuvonly = interp(tof_ens_gpu, pulse_data.enAxis,
+            streaked0 = interp(self.tof_ens_gpu, pulse_data.enAxis, streaked0)
+            streaked1 = interp(self.tof_ens_gpu, pulse_data.enAxis, streaked1)
+            xuvonly = interp(self.tof_ens_gpu, pulse_data.enAxis,
                              cp.square(cp.abs(pulse_data.enOutput)))
             
             
@@ -564,17 +597,17 @@ class StreakedData(object):
         return norm1
 
 
-    def to_Raw_Data(self) -> Raw_Data:
-        raw_obj = Raw_Data(self.get_augmented_spectra(), tof_ens, 
-                           self.pulse_props)
-        return raw_obj
+    # def to_Raw_Data(self) -> Raw_Data:
+    #     raw_obj = Raw_Data(self.get_augmented_spectra(), tof_ens, 
+    #                        self.pulse_props)
+    #     return raw_obj
 
-    def to_file(self, writepath):
-        if self.is_low_res():
-            raise self.Data_Nonexisting_Error(
-                'High resolution data is already deleted. Use to_file() before calculating streaked spectra or with get_spectra(keep_originals = True) ')
-        else:
-            self.get_temp().get().tofile(writepath)
+    # def to_file(self, writepath):
+    #     if self.is_low_res():
+    #         raise self.Data_Nonexisting_Error(
+    #             'High resolution data is already deleted. Use to_file() before calculating streaked spectra or with get_spectra(keep_originals = True) ')
+    #     else:
+    #         self.get_temp().get().tofile(writepath)
 
     def get_streakspeed(self):
         return self.__streakspeed
@@ -583,7 +616,7 @@ class StreakedData(object):
 # %%
 
 
-class Datagenerator(Sequence):
+class Data_Generator(Sequence):
     def __init__(self, x_set, y_set, batch_size, X, for_train=True):
         self.X=X
         self.x, self.y = x_set, y_set
