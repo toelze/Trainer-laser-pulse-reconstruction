@@ -11,16 +11,12 @@ import numpy as np
 import cupy as cp
 
 
-standard_full_time = np.linspace(-250, 250, 512) # TODO das muss noch untergebracht werden
-tof_ens = np.linspace(40, 110, 1401)
-
 
 # %%
 
 
 def measurement(streaked_data: Streaked_Data) -> Raw_Data:
     raw_data = Raw_Data(streaked_data.get_augmented_spectra(), 
-                        tof_ens, 
                         streaked_data.pulse_props,
                         streaked_data.exp_env)
         
@@ -31,24 +27,25 @@ def to_eVs(raw_data: Raw_Data) -> Energy_eV_Data:
 
     measurement_obj = Energy_eV_Data(raw_data.augment_vls(), 
                                     raw_data.augment_tof(),
-                                    raw_data.exp_env.tof_times, 
                                     raw_data.exp_env,
                                     raw_data.pulse_props) 
     
     return measurement_obj
 
-def to_eVs_from_file(number: int, path : str = './resources/raw_mathematica/up/' ) -> Energy_eV_Data:
+def to_eVs_from_file(number: int, 
+                     exp_env: Exp_Env,
+                     path : str = './resources/raw_mathematica/up/') -> Energy_eV_Data:
     
     tof0_data = np.fromfile(path+"TOF1-"+str(number)+".dat","float32")
     tof1_data = np.fromfile(path+"TOF2-"+str(number)+".dat","float32")
-    tof_times = np.fromfile('./resources/raw_mathematica/'+'TOF_times.dat',"float32")
+    tof_times = np.fromfile('./resources/raw_mathematica/'+'TOF_times.dat',"float32") # must be the same as defined  in exp_env
     
     vls_data = np.fromfile(path+"VLS-"+str(number)+".dat","float32")
     
     
     measurement_obj = Energy_eV_Data(vls_data, 
                                     (tof0_data, tof1_data),
-                                    tof_times, 
+                                    exp_env,
                                     None)     
     return measurement_obj
     
@@ -99,10 +96,7 @@ def get_exp_env() -> Exp_Env:
     tof_zeroindx = 674
     
     tof_response = np.fromfile("./resources/TOF_response.dat", dtype="float64")
-    tof_response = tof_response/np.sum(tof_response)
-    
-    energy_axis = np.arange(45,110.1,0.2)
-    
+    tof_response = tof_response/np.sum(tof_response)    
     
     ionization_potential = 21.55 #Neon 2p 
     vls_params = np.asarray([1239.84, 0.0032, 11.41])
@@ -110,6 +104,12 @@ def get_exp_env() -> Exp_Env:
     vls_energies = vls_params[0]/(vls_pixels*vls_params[1] + vls_params[2])  # VLS pix 2 nm calibration 
     vls_energies -= ionization_potential
     
+    sim_energies = np.linspace(40, 110, 1401)
+    sim_energies_gpu = cp.asarray(sim_energies)
+
+    
+    reconstruction_time = np.linspace(-250, 250, 512)
+    reconstruction_energies = np.arange(45,110.1,0.2)
     
     exp_env = Exp_Env(
                       h = h,
@@ -122,10 +122,13 @@ def get_exp_env() -> Exp_Env:
                       tof_zeroindx = tof_zeroindx,
                       tof_response = tof_response,
                       ionization_potential = ionization_potential,
-                      energy_axis = energy_axis,
                       vls_params = vls_params,
                       vls_pixels = vls_pixels,
-                      vls_energies = vls_energies)
+                      vls_energies = vls_energies,
+                      sim_energies = sim_energies,
+                      sim_energies_gpu = sim_energies_gpu,
+                      reconstruction_energies = reconstruction_energies,
+                      reconstruction_time = reconstruction_time)
 
     
     return exp_env
@@ -198,11 +201,11 @@ def streaking(streakspeed : float,
         t_mean, _ = weighted_avg_and_std(pulse_data.tAxis.get(), t_square.get())
         
         # 
-        pulse_props.tOutput = cp.interp(cp.asarray(standard_full_time), 
+        pulse_props.tOutput = cp.interp(cp.asarray(exp_env.reconstruction_time), 
                                         pulse_data.tAxis-t_mean, 
                                         t_square).get()
         pulse_props.tOutput = pulse_props.tOutput/cp.sum(pulse_props.tOutput)
-        pulse_props.tAxis = standard_full_time
+        pulse_props.tAxis = exp_env.reconstruction_time
             
         
         

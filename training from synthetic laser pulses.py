@@ -44,51 +44,13 @@ from streaking_cal.statistics import weighted_avg_and_std
 # print(cp.get_default_memory_pool().get_limit())  # 1073741824
 
 
-
-# # load noise peak for discretization of spectra
-# dfe = pd.read_csv("./resources/energies.csv", header=None)
-# orig_tof_ens = dfe[0].values
-
-
-# # df0=pd.read_csv("./FLASH-Spectra/0.0119464/"+"spec10.csv",header=None)
-# noisepeak = np.fromfile('./resources/noisepeak.dat', dtype="float64")
-# # noisepeak=(df0[1].values/sum(df0[1]))[orig_tof_ens<61]
-# noisepeak_gpu = cp.asarray(noisepeak)
-
-# peak_max_y = orig_tof_ens[len(noisepeak)]-orig_tof_ens[0]
-
-
 tof_ens = np.linspace(40, 110, 1401)
 tof_ens_gpu = cp.asarray(tof_ens)
 
-
-# progressbar for for loops
-
-
 CentralEnergy = 73
-h = 4.135667662  # in eV*fs
 
-# import precomputed components of phi_el
-# p*A_THz und A_THz^2 have been sampled at 2 zerocrossings ('up' and 'down') of A with p0 of 1 and E0 of 1
-# to calculate these contributions for arbitrary values, the base values are multiplied by E0 / E0^2 and p0 / 1
-# p_times_A_vals = np.fromfile('./resources/m_paval.dat', dtype=dt)
-# p_times_A_vals_up = 1/h*cp.asarray(p_times_A_vals['up'])
-# p_times_A_vals_down = 1/h*cp.asarray(p_times_A_vals['down'])
-# del(p_times_A_vals)
-
-# A_square_vals = np.fromfile('./resources/m_aquadval.dat', dtype=dt)
-# A_square_vals_up = 1/h*cp.asarray(A_square_vals['up'])
-# A_square_vals_down = 1/h*cp.asarray(A_square_vals['down'])
-# del(A_square_vals)
-
-# def fs_in_au(t): return 41.3414*t  # from fs to a.u.
-# def eV_in_au(e): return 0.271106*np.sqrt(e)  # from eV to a.u.
-
-# p0 = eV_in_au(CentralEnergy)
-
-# Pulse class returns temporal profile on basis of this time axis
-standard_full_time = np.loadtxt('./resources/standard_time.txt')
-standard_full_time = np.linspace(-250, 250, 512)
+reconstruction_time = np.loadtxt('./resources/standard_time.txt')
+reconstruction_time = np.linspace(-250, 250, 512)
 
 print("Num GPUs Available: ", len(
     tf.config.experimental.list_physical_devices('GPU')))
@@ -96,12 +58,11 @@ print(tf.version.VERSION)
 
 
 # %%
-# timeit
-# pbar = ProgressBar()
+
 from tqdm import tqdm as pbar
 from source.process_stages import get_exp_env
 
-num_pulses = 100000
+num_pulses = 1000
 streakspeed = 95  # meV/fs
 X = [""]*num_pulses
 y = [""]*num_pulses
@@ -116,7 +77,6 @@ for i in pbar(range(num_pulses),colour = 'red', ncols= 100):
 
     x1 = streaking(streakspeed = 95, exp_env = exp_env, pulse_props = pulse_props)
 
-    # x1.get_spectra(streakspeed, discretized=False)
     X[i] = x1
 
 # %%
@@ -223,6 +183,7 @@ history = merged_model.fit(x=train_ds, validation_data=test_ds,
                     epochs=1
                     )
 
+# %%
 
 # %%
 
@@ -260,15 +221,15 @@ testitems= train_ds.__getitem__(0)
 preds=merged_model.predict(testitems[0])
 y_test=testitems[1]
 # %matplotlib inline
-vv=288
+vv=11
 
 
-plt.plot(standard_full_time,y_test[vv])
-plt.plot(standard_full_time,preds[vv],'--')
+plt.plot(reconstruction_time,y_test[vv])
+plt.plot(reconstruction_time,preds[vv],'--')
 # plt.plot(time,gaussian_filter(y_test[vv],10))
 
 plt.figure()
-plt.plot(standard_full_time,preds[vv],'orange')
+plt.plot(reconstruction_time,preds[vv],'orange')
 
 plt.figure()
 # plt.plot(tof_ens,testitems[0][vv][0])
@@ -326,10 +287,10 @@ vv=93
 # plt.plot(time,gaussian_filter(y_test[vv],10))
 
 plt.figure()
-plt.plot(standard_full_time,
+plt.plot(reconstruction_time,
         preds[vv],
         'orange')
-vsigma=weighted_avg_and_std(standard_full_time,preds[vv])
+vsigma=weighted_avg_and_std(reconstruction_time,preds[vv])
 print([vsigma,2.35*vsigma[1]])
 plt.figure()
 plt.plot(np.arange(1825),testitems2[vv][1])
@@ -446,10 +407,10 @@ decoder.summary()
 temp_nearest=decoder(tf.convert_to_tensor([pca.inverse_transform(lower_dim_input[nearest_sample_index])]))[0]
 
 plt.figure()
-plt.plot(standard_full_time,
+plt.plot(reconstruction_time,
         temp_nearest,
         'orange')
-vsigma=weighted_avg_and_std(standard_full_time,temp_nearest)
+vsigma=weighted_avg_and_std(reconstruction_time,temp_nearest)
 print([vsigma,2.35*vsigma[1]])
 # plt.figure()
 # plt.plot(np.arange(1825),testitems2[vv][1])
