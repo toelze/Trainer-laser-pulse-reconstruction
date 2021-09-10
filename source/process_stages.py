@@ -175,9 +175,9 @@ def streaking(streakspeed : float,
                                                 dt_FWHM=2.355*pulse_props.dT*2**0.5,
                                                 onlyT=False)
         pulse_data = Pulse_Data(enAxis= enAxis, 
-                            enOutput= enOutput, 
-                            tAxis= tAxis,
-                            tOutput= tOutput)
+                                enOutput= enOutput,                                                
+                                tAxis= tAxis,
+                                tOutput= tOutput)
         
         return pulse_data
     
@@ -186,9 +186,9 @@ def streaking(streakspeed : float,
     
     def calc_PulseProperties(pulse_data: Pulse_Data) -> Pulse_Properties:
         from streaking_cal.statistics import weighted_avg_and_std
-
-        # keep in mind: pulse must be centered around 0 fs
         pass
+        # keep in mind: pulse must be centered around 0 fs
+        return None
     
     
     

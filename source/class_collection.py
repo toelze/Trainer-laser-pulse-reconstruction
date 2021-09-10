@@ -100,6 +100,7 @@ class Pulse_Properties:
         self.num_electrons1 = num_electrons1
         self.centralE = centralE
         self.p0 = 0.271106*np.sqrt(centralE)
+        self.temp_offset = 0
 
 
 
@@ -176,8 +177,8 @@ class Raw_Data():
 
         self.calc_vls_spectrum()
 
-        self.num_tof_noise0=int(0+np.random.rand()*3) # num of stray electrons in spectra
-        self.num_tof_noise1=int(0+np.random.rand()*3)
+        self.num_tof_noise0=int(0+np.random.rand()*35) # num of stray electrons in spectra
+        self.num_tof_noise1=int(0+np.random.rand()*35)
 
     def tof_to_eV(self,t):
 
@@ -324,7 +325,8 @@ class Streaked_Data(object):
                  pulse_props: Pulse_Properties, 
                  pulse_data: Pulse_Data, 
                  exp_env: Exp_Env,
-                 streakspeed: float):
+                 streakspeed: float,
+                 temp_offset: float = 0):
 
         from streaking_cal.statistics import weighted_avg_and_std
 
@@ -332,7 +334,8 @@ class Streaked_Data(object):
         self.exp_env = exp_env     
 
         self.streakspeed = streakspeed
-        
+        self.pulse_props.temp_offset = temp_offset
+        pulse_data.tOutput = cp.roll(pulse_data.tOutput, temp_offset)
         self.get_streaked_spectra(pulse_data = pulse_data, streak_speed = streakspeed) # calculate streaked spectra
 
 
@@ -385,7 +388,7 @@ class Streaked_Data(object):
 
         shiftall = 0 # random wert ist ausgelagert
 
-        shiftstr = np.random.randint(-120, 120)
+        shiftstr = 0 # np.random.randint(-120, 120)
 
         aug_spectra[0] = np.roll(aug_spectra[0], shiftall)
         aug_spectra[1] = np.roll(aug_spectra[1], shiftall-shiftstr)
