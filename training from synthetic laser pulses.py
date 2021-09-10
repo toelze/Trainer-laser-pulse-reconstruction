@@ -1,13 +1,10 @@
 # %%
 
-
+# TODO: gemessene Daten sind wieder nur schlecht durch simulierte angehähert, woran liegt das?
 # TODO: import 'to_eVs_from_file' funktioniert nicht TOFs sind falsch skaliert
-# TODO RawData refactorn
 # TODO: strshift auf letzte Klasse verlagern
-# TODO: wie können die wichtigsten Daten elegant mit geliefert werden beim Erzeugen eines neuen Objekt?
-# TODO: welche Daten sind bei jeder Instanz gleich / unterschiedlich?
-# TODO: composition: Klassen halten Daten für Pulsparameter, für statische/ variable Messumgebung,
-# TODO neuronales Netz anpassen
+# TODO neuronales Netz anpassen; functionen auslagern
+# TODO: self.x und self.y in Datagenerator loswerden
 
 # TODO: Grafik: welche Periodendauern werden wie rekonstruiert? (testdaten)
 # TODO: grafiken erzeugen : Genauigkeit über time-bandwidth-product
@@ -18,10 +15,8 @@
 
 import os
 
-import cupy as cp
 import matplotlib.pyplot as plt
 import numpy as np
-import pandas as pd
 import tensorflow as tf
 
 from sklearn.model_selection import train_test_split
@@ -44,41 +39,108 @@ from streaking_cal.statistics import weighted_avg_and_std
 # print(cp.get_default_memory_pool().get_limit())  # 1073741824
 
 
-tof_ens = np.linspace(40, 110, 1401)
-tof_ens_gpu = cp.asarray(tof_ens)
-
 CentralEnergy = 73
 
-reconstruction_time = np.loadtxt('./resources/standard_time.txt')
-reconstruction_time = np.linspace(-250, 250, 512)
 
 print("Num GPUs Available: ", len(
     tf.config.experimental.list_physical_devices('GPU')))
 print(tf.version.VERSION)
-
 
 # %%
 
 from tqdm import tqdm as pbar
 from source.process_stages import get_exp_env
 
-num_pulses = 1000
+num_pulses = 100000
 streakspeed = 95  # meV/fs
 X = [""]*num_pulses
 y = [""]*num_pulses
 exp_env = get_exp_env()
 
 for i in pbar(range(num_pulses),colour = 'red', ncols= 100):
-    pulse_props= Pulse_Properties(fwhm_t = np.random.uniform(70, 150),  # in fs
+    pulse_props= Pulse_Properties(fwhm_t = np.random.uniform(60, 180),  # in fs
                                  fwhm_E = np.random.uniform(0.2, 1.8), # in eV
                                  num_electrons0 = np.random.randint(15, 40), 
                                  num_electrons1 = np.random.randint(15, 40), 
-                                 centralE = np.random.uniform(65,75))
+                                 centralE = np.random.uniform(CentralEnergy-3,CentralEnergy+3))
 
-    x1 = streaking(streakspeed = 95, exp_env = exp_env, pulse_props = pulse_props)
+    x1 = streaking(streakspeed = np.random.uniform(streakspeed-5,streakspeed+5), 
+                   exp_env = exp_env, pulse_props = pulse_props)
 
     X[i] = x1
+# %%
+# create figures for talk
+# temp. profile from GetSASE
+import cupy as cp
+from streaking_cal.GetSASE import GetSASE_gpu as GS
+(enAxis, enOutput, tAxis, tOutput) = GS(CentralEnergy=pulse_props.centralE,
+                                                dE_FWHM=2.355*pulse_props.dE*2**0.5,
+                                                dt_FWHM=2.355*pulse_props.dT*2**0.5,
+                                                onlyT=False)
 
+
+plt.plot(cp.abs(tOutput).get())
+plt.savefig("getSASE.svg")
+
+# %%
+# streaked spectra figure
+from source.process_stages import (measurement, to_eVs)
+
+nn=14
+n0 = X[nn].get_augmented_spectra()[0]
+n0 = n0 / sum(n0)
+n1 = X[nn].get_augmented_spectra()[1]
+n1 = n1 / sum(n1)
+n2 = X[nn].get_augmented_spectra()[2]
+n2 = n2 / sum(n2)
+plt.plot(n0)
+plt.plot(n1)
+plt.plot(n2)
+plt.xlim([545,750])
+
+plt.savefig("streaked_spectra2.svg")
+plt.figure()
+
+
+# discretized spectra
+meas= measurement(X[nn])
+n0 = np.roll(meas.calc_tof_traces()[0],-610)
+n0 = n0 / sum(n0)
+n1 = np.roll(meas.calc_tof_traces()[1],-610)
+n1 = n1 / sum(n1)
+n2 = meas.eVenergies_to_vls_pix(meas.spectra[0]) # VLS
+n2 = n2 / sum(n2)
+
+plt.plot(n0)
+plt.plot(n1)
+plt.plot(n2)
+plt.xlim([490,600])
+
+plt.savefig("discretized_spectra2.svg")
+plt.figure()
+
+# final spectra
+teV=to_eVs(meas).spectra
+
+plt.plot(teV[0])
+plt.plot(teV[1])
+plt.plot(teV[2])
+plt.xlim([80,190])
+
+plt.savefig("final_spectra2.svg")
+
+# %%
+plt.imshow(np.log(teV+0.01),aspect=25, cmap = 'Greens', interpolation = 'none')
+plt.savefig("input_data.svg")
+
+# %%
+# test, what is the effect of shot noise?
+tof_traces = meas.calc_tof_traces()
+tof_traces_n = meas.add_tof_noise(tof_traces[0],50)
+
+plt.plot(tof_traces[0])
+plt.plot(tof_traces_n)
+plt.xlim([1000,1200])
 # %%
 
 wholeset = np.arange(len(X))
@@ -127,7 +189,7 @@ def convT_Decoder(inputs: tf.keras.Input, outputsize: int) -> tf.keras.Model:
     num_filters = 16
     
     # x = BatchNormalization()(inputs)
-    x = Reshape((1,-1))(x)
+    x = Reshape((1,-1))(inputs)
     x = Conv1DTranspose(filters = num_filters, kernel_size=outputsize // num_filters)(x)
     x = Flatten()(x)
     outputs = Softmax()(x)
@@ -174,17 +236,20 @@ lr_schedule = tf.keras.optimizers.schedules.ExponentialDecay(
 nadam = tf.keras.optimizers.Nadam(learning_rate=0.006)
 adagrad = tf.keras.optimizers.Adagrad(
     learning_rate=lr_schedule, initial_accumulator_value=0.1)
-merged_model.compile(optimizer="nadam", loss="KLDivergence",
-              metrics=["accuracy", "mae"])
+merged_model.compile(optimizer="nadam", 
+                    #  loss="KLDivergence",
+                    loss = 'categorical_crossentropy',
+                    metrics=["accuracy", "mae", "KLDivergence"])
 
 history = merged_model.fit(x=train_ds, validation_data=test_ds,
-                    #                     use_multiprocessing=True,
+                                        # use_multiprocessing=True,
                     #                     workers=4,
-                    epochs=1
+                    epochs=3
                     )
 
 # %%
 
+train_ds.__getitem__(0)[0].shape[1:]
 # %%
 
 # ----------------------SAVE MODELS-------------------------
@@ -196,9 +261,9 @@ history = merged_model.fit(x=train_ds, validation_data=test_ds,
 
 # ----------------------LOAD MODELS-------------------------
 
-merged_model = tf.keras.models.load_model('./models/3.2THz-eV-95-merged')
-encoder = tf.keras.models.load_model('./models/3.2THz-eV-95-encoder')
-decoder = tf.keras.models.load_model('./models/3.2THz-eV-95-decoder')
+# merged_model = tf.keras.models.load_model('./models/3.2THz-eV-95-merged')
+# encoder = tf.keras.models.load_model('./models/3.2THz-eV-95-encoder')
+# decoder = tf.keras.models.load_model('./models/3.2THz-eV-95-decoder')
 # %%
 
 
@@ -221,15 +286,15 @@ testitems= train_ds.__getitem__(0)
 preds=merged_model.predict(testitems[0])
 y_test=testitems[1]
 # %matplotlib inline
-vv=11
+vv=27
 
 
-plt.plot(reconstruction_time,y_test[vv])
-plt.plot(reconstruction_time,preds[vv],'--')
+plt.plot(exp_env.reconstruction_time,y_test[vv])
+plt.plot(exp_env.reconstruction_time,preds[vv],'--')
 # plt.plot(time,gaussian_filter(y_test[vv],10))
 
 plt.figure()
-plt.plot(reconstruction_time,preds[vv],'orange')
+plt.plot(exp_env.reconstruction_time,preds[vv],'orange')
 
 plt.figure()
 # plt.plot(tof_ens,testitems[0][vv][0])
@@ -238,65 +303,71 @@ plt.plot(enax,testitems[0][vv][1])
 plt.plot(enax,testitems[0][vv][2])
 # plt.xlim([500,700])
 
-
 # %%
-from source.process_stages import to_eVs_from_file
-from matplotlib import pyplot as plt
-mop = to_eVs_from_file(9656)
-plt.plot(mop.self.exp_env.energy_axis,mop.spectra[0])
+plt.figure()
+plt.plot(exp_env.reconstruction_time,preds[vv],'orange')
+plt.savefig("output.svg")
 
+plt.figure()
+plt.plot(exp_env.reconstruction_time,y_test[vv])
+plt.savefig("ref_output.svg")
 # %%
 import os
 import re
 from itertools import repeat
-
-folder="./resources/raw_mathematica/down/"
-files=os.listdir(folder)
-
-numbers=list(map(re.findall,repeat("[0-9]{5}"),files))
-numbers=np.asarray(numbers)[:,0].astype("int32")
+from source.process_stages import to_eVs_from_file
 # %%
 folder="./resources/raw_mathematica/up/"
 files=os.listdir(folder)
 
 numbers=list(map(re.findall,repeat("[0-9]{4}"),files))
 numbers=np.asarray(numbers)[:,0].astype("int32")
+
+X_exp = [to_eVs_from_file(i,exp_env) for i in numbers]
+# %%
+X_exp[0].spectra.shape
+# %%
+plt.plot(X_exp[0].spectra[2])
 #%%
 
 
-tof1=[]
-tof2=[]
-vls=[]
-testitems2=[]
-for i in numbers:
-    tof11=np.fromfile(folder+"TOF1-"+str(i)+".dat","float32")
-    tof21=np.fromfile(folder+"TOF2-"+str(i)+".dat","float32")
-    vls11=np.fromfile(folder+"VLS-"+str(i)+".dat","float32")
-    tof11=np.roll(tof11,150)
-    tof21=np.roll(tof21,150)
-    vls11=np.pad(vls11,pad_width=(0, len(tof11)-len(vls11)))
-    vls11=np.roll(vls11,0)
-    testitems2.append([vls11,tof11,tof21])
+# tof1=[]
+# tof2=[]
+# vls=[]
+# testitems2=[]
+# for i in numbers:
+#     tof11=np.fromfile(folder+"TOF1-"+str(i)+".dat","float32")
+#     tof21=np.fromfile(folder+"TOF2-"+str(i)+".dat","float32")
+#     vls11=np.fromfile(folder+"VLS-"+str(i)+".dat","float32")
+#     tof11=np.roll(tof11,150)
+#     tof21=np.roll(tof21,150)
+#     vls11=np.pad(vls11,pad_width=(0, len(tof11)-len(vls11)))
+#     vls11=np.roll(vls11,0)
+#     testitems2.append([vls11,tof11,tof21])
+# testitems2=np.reshape(np.asarray(testitems2),[len(numbers),3,-1,1])
+# %%
+testitems2 = [i.spectra for i in X_exp]
 testitems2=np.reshape(np.asarray(testitems2),[len(numbers),3,-1,1])
-
 #%%
 preds=merged_model.predict(testitems2)
+
+# %%
 # %matplotlib inline
-vv=93
+vv=26
 
 # plt.plot(time,gaussian_filter(y_test[vv],10))
 
 plt.figure()
-plt.plot(reconstruction_time,
+plt.plot(exp_env.reconstruction_time,
         preds[vv],
         'orange')
-vsigma=weighted_avg_and_std(reconstruction_time,preds[vv])
+vsigma=weighted_avg_and_std(exp_env.reconstruction_time,preds[vv])
 print([vsigma,2.35*vsigma[1]])
 plt.figure()
-plt.plot(np.arange(1825),testitems2[vv][1])
-plt.plot(np.arange(1825),testitems2[vv][2])
-plt.plot(np.arange(1825),testitems2[vv][0])
-plt.xlim([500,700])
+plt.plot(exp_env.reconstruction_energies,testitems2[vv][1])
+plt.plot(exp_env.reconstruction_energies,testitems2[vv][2])
+plt.plot(exp_env.reconstruction_energies,testitems2[vv][0])
+# plt.xlim([500,700])
 
 
 # %%
@@ -407,10 +478,10 @@ decoder.summary()
 temp_nearest=decoder(tf.convert_to_tensor([pca.inverse_transform(lower_dim_input[nearest_sample_index])]))[0]
 
 plt.figure()
-plt.plot(reconstruction_time,
+plt.plot(exp_env.reconstruction_time,
         temp_nearest,
         'orange')
-vsigma=weighted_avg_and_std(reconstruction_time,temp_nearest)
+vsigma=weighted_avg_and_std(exp_env.reconstruction_time,temp_nearest)
 print([vsigma,2.35*vsigma[1]])
 # plt.figure()
 # plt.plot(np.arange(1825),testitems2[vv][1])
